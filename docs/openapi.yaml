@@ -1,0 +1,4578 @@
+openapi: 3.1.0
+info:
+  title: HexaDent AI Inventory Platform API
+  version: 0.3.0
+  description: Web、iOS 与 Android MVP 的统一业务 API Contract。生产域名待定。
+servers:
+- url: /v1
+  description: 相对 API 版本路径；生产域名待定
+security:
+- bearerAuth: []
+tags:
+- name: Auth
+  description: '**Supabase Client Auth** — 以下由 React/Vite Web 与 React Native App 通过 `@supabase/supabase-js` 调用，不是 FastAPI
+    Endpoint，密码不传给 FastAPI。两端使用相同 Auth 方法；React Native 需另外配置 AsyncStorage、AppState Token Refresh 和 Deep Linking。
+
+
+    - **Login:** `signInWithPassword({ email, password })` → Session → 携带 Access Token 调用 `GET /me`。
+
+    - **Forgot password:** `resetPasswordForEmail(email)` → 发送 Recovery Email，页面统一显示“如果账号存在，将收到重置邮件”。
+
+    - **Reset from email:** `verifyOtp({ token_hash, type: ''recovery'' })` → `updateUser({ password: newPassword })`。
+
+    - **Change password:** `updateUser({ email, current_password, password })`；Supabase 开启 Require current password。
+
+    - **Sign out:** `signOut()` 清除当前浏览器 Session。
+
+
+    完整页面路由、提示文案与错误处理见 `api-design.md` 的 **2.2 Login and Password**。下方 Operations 均为 FastAPI Contract。'
+- name: Account
+- name: Lookups
+- name: Products
+- name: Inventory - Items
+- name: Inventory - Activities
+- name: Inventory - Imports
+- name: Purchase Lists
+- name: Dashboard
+- name: Analytics
+- name: Notifications
+paths:
+  /auth/registrations:
+    post:
+      tags:
+      - Auth
+      operationId: createRegistration
+      summary: 创建完整 Pending Onboarding
+      responses:
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: 请求频率超过限制
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 依赖服务暂不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '201':
+          description: 注册创建成功，等待邮箱验证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationResult'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationRequest'
+      security: []
+  /auth/registrations/resend-verification:
+    post:
+      tags:
+      - Auth
+      operationId: resendRegistrationVerification
+      summary: 重新发送验证邮件
+      responses:
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: 请求频率超过限制
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 依赖服务暂不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '202':
+          description: 请求已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResendVerificationResult'
+      description: 为避免泄露账户是否存在或是否已验证，符合格式的请求统一返回 202。202 表示请求已接受，不保证邮件已经送达。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailRequest'
+      security: []
+  /auth/registrations/activation:
+    post:
+      tags:
+      - Auth
+      operationId: activateRegistration
+      summary: 激活 Membership 与 Organization
+      responses:
+        '200':
+          description: 激活完成或已处于 Active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivationResult'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 依赖服务暂不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: '本接口没有 Path、Query 或 Request Body 参数。验证邮件不会携带注册时的 Authorization Header。邮件中的自定义链接应携带一次性 token_hash 和 type=email
+        并打开前端确认页。前端调用 Supabase verifyOtp({ token_hash, type: ''email'' }) 完成验证；Supabase 随后在当前浏览器签发新 Session，所以此流程不依赖原浏览器保存的
+        Session，也可在无痕窗口或其他设备完成。前端再在 Authorization Header 中携带新 Session 的 Access Token 调用本接口。后端从 Token 的 `sub` 识别 User，确认 Email
+        已验证，再幂等激活其 Pending Membership 和 Organization。客户端不得提交 userId、email 或 organizationId。'
+  /me:
+    get:
+      tags:
+      - Account
+      operationId: getCurrentContext
+      summary: 获取当前账户与租户上下文
+      responses:
+        '200':
+          description: 当前上下文
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /me/profile:
+    patch:
+      tags:
+      - Account
+      operationId: updateCurrentProfile
+      summary: 更新当前账户姓名
+      responses:
+        '200':
+          description: 更新后的 Profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdateRequest'
+  /me/organization:
+    get:
+      tags:
+      - Account
+      operationId: getCurrentOrganization
+      summary: 获取当前诊所设置
+      responses:
+        '200':
+          description: Organization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    patch:
+      tags:
+      - Account
+      operationId: updateCurrentOrganization
+      summary: 更新当前诊所设置
+      responses:
+        '200':
+          description: 更新结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationUpdateResult'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationUpdateRequest'
+  /brands:
+    get:
+      tags:
+      - Lookups
+      operationId: listBrands
+      summary: 查询可见 Brand
+      responses:
+        '200':
+          description: 查询结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityReferenceList'
+              examples:
+                allVisibleBrands:
+                  summary: 不传 keyword 时的可选 Brand 列表
+                  value:
+                    items:
+                    - id: 11111111-1111-4111-8111-111111111111
+                      name: 3M
+                    - id: 22222222-2222-4222-8222-222222222222
+                      name: Dentsply Sirona
+                    - id: 33333333-3333-4333-8333-333333333333
+                      name: Kerr Dental
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - name: keyword
+        in: query
+        required: false
+        description: 可选；省略或 trim 后为空时返回全部可见 Brands；否则按名称不区分大小写包含匹配。
+        schema:
+          type: string
+          maxLength: 160
+      description: 不传 `keyword` 或 trim 后为空时返回全部可见 Brands；传入时按名称进行不区分大小写的包含匹配。
+    post:
+      tags:
+      - Lookups
+      operationId: createBrand
+      summary: 创建或复用 Organization Brand
+      responses:
+        '200':
+          description: 已创建或复用的资源
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityReference'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LookupCreateRequest'
+  /units:
+    get:
+      tags:
+      - Lookups
+      operationId: listUnits
+      summary: 查询可见 Unit
+      responses:
+        '200':
+          description: 查询结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityReferenceList'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - name: keyword
+        in: query
+        required: false
+        description: 可选；省略或 trim 后为空时返回全部可见 Units，否则按名称筛选。
+        schema:
+          type: string
+          maxLength: 80
+      description: 不传 `keyword` 或 trim 后为空时返回全部可见 Units；传入时按名称进行不区分大小写的包含匹配。
+    post:
+      tags:
+      - Lookups
+      operationId: createUnit
+      summary: 创建或复用 Organization Unit
+      responses:
+        '200':
+          description: 已创建或复用的资源
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityReference'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LookupCreateRequest'
+  /categories:
+    get:
+      tags:
+      - Lookups
+      operationId: listCategories
+      summary: 查询全部父级 Categories
+      responses:
+        '200':
+          description: Category 列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryList'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: MVP 不接收查询参数，返回全部 Active Global 父级 Categories，不返回子类。
+  /products:
+    get:
+      tags:
+      - Products
+      operationId: listProducts
+      summary: 搜索 Product Library
+      responses:
+        '200':
+          description: Product 分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: '`keyword`、`brandId` 和 `categoryId` 均可选，可组合筛选；不传某个参数时不应用该维度的过滤。'
+      parameters:
+      - &id002
+        name: keyword
+        in: query
+        required: false
+        description: 去除首尾空格后进行大小写不敏感搜索
+        schema:
+          type: string
+      - name: brandId
+        in: query
+        required: false
+        description: 可选；只返回指定 Brand 下的 Products。
+        schema: &id001
+          type: string
+          format: uuid
+      - name: categoryId
+        in: query
+        required: false
+        description: 可选；只返回指定 Category 下的 Products。
+        schema: *id001
+      - &id003
+        name: page
+        in: query
+        required: false
+        description: 页码
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+      - &id004
+        name: pageSize
+        in: query
+        required: false
+        description: 每页数量
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+  /products/{productId}:
+    get:
+      tags:
+      - Products
+      operationId: getProduct
+      summary: 获取 Product 详情
+      responses:
+        '200':
+          description: Product 详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductDetail'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - name: productId
+        in: path
+        required: true
+        description: Product ID
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags:
+      - Products
+      operationId: updateManualProduct
+      summary: 修改当前诊所拥有的 Manual Product
+      responses:
+        '200':
+          description: 更新后的 Product
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductDetail'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - name: productId
+        in: path
+        required: true
+        description: Product ID
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductUpdateRequest'
+  /inventory/items:
+    get:
+      tags:
+      - Inventory - Items
+      operationId: listInventoryItems
+      summary: 查询有效库存
+      responses:
+        '200':
+          description: 库存分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItemPage'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - *id002
+      - name: brandId
+        in: query
+        required: false
+        description: 可选；只返回指定 Brand 下的 Inventory Items。
+        schema: *id001
+      - name: categoryId
+        in: query
+        required: false
+        description: Category ID
+        schema: *id001
+      - name: inventoryStatus
+        in: query
+        required: false
+        description: 库存状态；可重复传递
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+            - in_stock
+            - low_stock
+            - out_of_stock
+      - name: expiryStatus
+        in: query
+        required: false
+        description: 有效期状态；可重复传递
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+            - not_set
+            - normal
+            - expiring_soon
+            - expired
+      - *id003
+      - *id004
+    post:
+      tags:
+      - Inventory - Items
+      operationId: addInventoryItem
+      summary: 从 Library 加入库存或创建 Manual Product 后加入库存
+      responses:
+        '200':
+          description: 创建或恢复后的 Inventory Item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItemDetail'
+        '400':
+          description: 请求格式或参数组合无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: Request Body 支持两种互斥形式，由 `sourceType` 区分：`library_product` 使用已有 `productId` 加入库存；`manual_product` 在同一事务中创建
+        Manual Product 并加入库存。
+      parameters:
+      - &id006
+        name: Idempotency-Key
+        in: header
+        required: true
+        description: 一次业务提交的随机唯一标识；重试必须复用原值。
+        schema:
+          type: string
+          minLength: 8
+          maxLength: 128
+          example: 550e8400-e29b-41d4-a716-446655440000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddInventoryItemRequest'
+            examples:
+              libraryProduct:
+                summary: 1. 使用已有 Product Library 商品创建库存
+                value:
+                  sourceType: library_product
+                  productId: 11111111-1111-4111-8111-111111111111
+                  inventory:
+                    quantityOnHand: '10.00'
+                    lowStockThreshold: '3.00'
+                    location: Storage A
+                    vendor: K-Dental
+                    vendorItemNumber: '49135'
+                    purchasePrice: '45.00'
+                    expiryDate: null
+                    internalNote: null
+                  duplicateAcknowledgements: []
+              manualEntry:
+                summary: 2. Manual Entry：创建 Product 并加入库存
+                value:
+                  sourceType: manual_product
+                  product:
+                    name: Custom Composite A2
+                    brandId: 22222222-2222-4222-8222-222222222222
+                    categoryId: 33333333-3333-4333-8333-333333333333
+                    manufacturer: Example Manufacturer
+                    mfgNumber: ABC-001
+                    barcode: null
+                    specification: 4 g syringe
+                    unitId: 44444444-4444-4444-8444-444444444444
+                  inventory:
+                    quantityOnHand: '10.00'
+                    lowStockThreshold: '3.00'
+                    location: Storage A
+                    vendor: null
+                    vendorItemNumber: null
+                    purchasePrice: null
+                    expiryDate: null
+                    internalNote: null
+                  duplicateAcknowledgements: []
+  /inventory/items/{inventoryItemId}:
+    get:
+      tags:
+      - Inventory - Items
+      operationId: getInventoryItem
+      summary: 获取 Inventory Item 详情
+      responses:
+        '200':
+          description: Inventory Item 详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItemDetail'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '410':
+          description: 资源已从有效业务范围移除
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - &id005
+        name: inventoryItemId
+        in: path
+        required: true
+        description: Inventory Item ID
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags:
+      - Inventory - Items
+      operationId: updateInventoryItem
+      summary: 编辑 Inventory Information
+      responses:
+        '200':
+          description: 更新结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItemUpdateResult'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - *id005
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InventoryItemUpdateRequest'
+    delete:
+      tags:
+      - Inventory - Items
+      operationId: removeInventoryItem
+      summary: 从有效库存移除商品
+      responses:
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '204':
+          description: 操作成功，无响应体
+      parameters:
+      - *id005
+      - name: If-Match
+        in: header
+        required: true
+        description: '必须与当前 Inventory Item version 匹配，例如 version=7 时传 `If-Match: "7"`。用于防止删除已被其他请求修改的数据。'
+        schema:
+          type: string
+          example: '"7"'
+  /inventory/items/{inventoryItemId}/quantity-adjustments:
+    post:
+      tags:
+      - Inventory - Items
+      operationId: adjustInventoryQuantity
+      summary: 调整库存数量
+      responses:
+        '200':
+          description: 调整后的库存与 Activity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuantityAdjustmentResult'
+        '400':
+          description: 请求格式或参数组合无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - *id005
+      - *id006
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuantityAdjustmentRequest'
+  /inventory/items/{inventoryItemId}/purchase-list-blockers:
+    get:
+      tags:
+      - Inventory - Items
+      operationId: getInventoryRemovalBlockers
+      summary: 查询阻止移除库存的 Active Purchase Lists
+      responses:
+        '200':
+          description: 阻塞清单
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseListBlockers'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: 用于打开 Remove from Inventory 确认界面前的预检查。`purchaseLists` 为空时可继续确认删除；非空时前端展示相关 Active Lists 的入口并禁止删除。真正执行 DELETE
+        时后端仍会再次校验。
+      parameters:
+      - *id005
+  /inventory/activities:
+    get:
+      tags:
+      - Inventory - Activities
+      operationId: listInventoryActivities
+      summary: 查询 Inventory Activity
+      responses:
+        '200':
+          description: Activity 分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityPage'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: 所有筛选参数都可选，可组合使用。不传 `period` 时不限制时间范围。列表 Item 已包含 MVP 展示所需的完整 Activity 字段。
+      parameters:
+      - *id002
+      - name: inventoryItemId
+        in: query
+        required: false
+        description: 可选；只返回指定 Inventory Item 的 Activity。
+        schema: *id001
+      - name: eventType
+        in: query
+        required: false
+        description: 可选、可多选的操作类型；可重复传递 Query Parameter。
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+            - increase
+            - decrease
+            - set_quantity
+            - item_added
+            - item_edited
+            - item_removed
+            - purchase_receipt
+            - import_adjustment
+      - name: period
+        in: query
+        required: false
+        description: 可选。按 Organization Timezone 计算：today 从当日 00:00 至现在；last_7_days 从 6 天前 00:00 至现在；last_30_days 从 29 天前 00:00
+          至现在。
+        schema:
+          type: string
+          enum:
+          - today
+          - last_7_days
+          - last_30_days
+      - *id003
+      - *id004
+  /purchase-lists:
+    get:
+      tags:
+      - Purchase Lists
+      operationId: listPurchaseLists
+      summary: 查询 Active 或 Completed Purchase Lists
+      responses:
+        '200':
+          description: Purchase List 分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseListPage'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: 列表只返回 Purchase List 摘要与进度统计，不返回具体 Items；进入单个清单后通过 `GET /purchase-lists/{purchaseListId}` 获取 Items。
+      parameters:
+      - name: status
+        in: query
+        required: false
+        description: List 状态
+        schema:
+          type: string
+          enum:
+          - active
+          - completed
+      - *id002
+      - *id003
+      - *id004
+    post:
+      tags:
+      - Purchase Lists
+      operationId: createPurchaseList
+      summary: 创建 Active Purchase List，可选同时加入已选库存商品
+      responses:
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '201':
+          description: 创建后的 Purchase List 详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseListDetail'
+      description: 不传 `items` 时创建空清单；传入 `items` 时，创建清单与加入商品在同一数据库事务中全部成功或全部回滚。
+      parameters:
+      - *id006
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseListCreateRequest'
+            examples:
+              emptyList:
+                summary: 只创建空 Purchase List
+                value:
+                  name: Weekly Order
+                  notes: Order before Friday
+              listWithSelectedItems:
+                summary: 创建 Purchase List 并加入已选库存商品
+                value:
+                  name: Weekly Order
+                  notes: Order before Friday
+                  items:
+                  - inventoryItemId: 11111111-1111-4111-8111-111111111111
+                    requestedQuantity: '5.00'
+                  - inventoryItemId: 22222222-2222-4222-8222-222222222222
+                    requestedQuantity: '2.00'
+  /purchase-lists/{purchaseListId}:
+    get:
+      tags:
+      - Purchase Lists
+      operationId: getPurchaseList
+      summary: 获取 Purchase List 详情与 Items
+      responses:
+        '200':
+          description: Purchase List 详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseListDetail'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - &id007
+        name: purchaseListId
+        in: path
+        required: true
+        description: Purchase List ID
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags:
+      - Purchase Lists
+      operationId: updatePurchaseList
+      summary: 编辑 Active Purchase List
+      responses:
+        '200':
+          description: 更新后的 Purchase List
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseListMutationResult'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: '`includeItems=false` 或不传时响应不包含 `items`；`includeItems=true` 时返回更新后的完整 Items。'
+      parameters:
+      - *id007
+      - &id008
+        name: includeItems
+        in: query
+        required: false
+        description: 是否在响应中返回完整 Purchase List Items；默认 false。
+        schema:
+          type: boolean
+          default: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseListWriteRequest'
+    delete:
+      tags:
+      - Purchase Lists
+      operationId: deletePurchaseList
+      summary: 删除 Active Purchase List
+      responses:
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '204':
+          description: 操作成功，无响应体
+      parameters:
+      - *id007
+  /purchase-lists/{purchaseListId}/completion:
+    post:
+      tags:
+      - Purchase Lists
+      operationId: completePurchaseList
+      summary: 完成已全部收货的 Purchase List
+      responses:
+        '200':
+          description: Completed Purchase List
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseListMutationResult'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: '`includeItems=false` 或不传时响应不包含 `items`；`includeItems=true` 时返回完成后的完整 Items。'
+      parameters:
+      - *id007
+      - *id008
+  /purchase-lists/{purchaseListId}/export:
+    get:
+      tags:
+      - Purchase Lists
+      operationId: exportPurchaseList
+      summary: 导出 Purchase List
+      responses:
+        '200':
+          description: CSV 或 PDF 文件流
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 依赖服务暂不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - *id007
+      - name: format
+        in: query
+        required: true
+        description: 导出格式
+        schema:
+          type: string
+          enum:
+          - csv
+          - pdf
+  /purchase-lists/{purchaseListId}/items:
+    post:
+      tags:
+      - Purchase Lists
+      operationId: addItemsToPurchaseList
+      summary: 将一个或多个库存商品加入一个 Purchase List
+      responses:
+        '200':
+          description: 商品添加结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseListItemsAddResult'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: MVP 每次只操作 Path 指定的一个 Active Purchase List。已在清单中的 Inventory Item 返回在 `skipped`；任一其他 Item 无效、已移除或跨租户时，整次请求失败且不添加任何新行。
+      parameters:
+      - *id007
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseListItemsAddRequest'
+  /purchase-list-items/{itemId}:
+    patch:
+      tags:
+      - Purchase Lists
+      operationId: updatePurchaseListItem
+      summary: 修改 Requested Quantity
+      responses:
+        '200':
+          description: 更新后的 Purchase List Item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseListItem'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - &id009
+        name: itemId
+        in: path
+        required: true
+        description: Purchase List Item ID
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestedQuantityUpdateRequest'
+    delete:
+      tags:
+      - Purchase Lists
+      operationId: deletePurchaseListItem
+      summary: 从 Active List 移除 Item
+      responses:
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '204':
+          description: 操作成功，无响应体
+      parameters:
+      - *id009
+  /purchase-list-items/{itemId}/receipts:
+    post:
+      tags:
+      - Purchase Lists
+      operationId: receivePurchaseListItem
+      summary: 确认一次分批收货
+      responses:
+        '200':
+          description: Receipt 与更新后的 Purchase List Item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseReceiptResult'
+        '400':
+          description: 请求格式或参数组合无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: 后端仍在同一事务中更新 Inventory Item 并创建 Purchase Receipt Activity，但响应只返回本页立即需要的 Receipt 和更新后的 Purchase List Item。
+      parameters:
+      - *id009
+      - *id006
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseReceiptRequest'
+  /dashboard:
+    get:
+      tags:
+      - Dashboard
+      operationId: getDashboard
+      summary: 获取 Dashboard 固定首屏数据
+      responses:
+        '200':
+          description: Dashboard 固定首屏数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: 无 Query 参数。一次返回 Summary、Inventory Status、最近 30 天 Top Used Products，以及三组最多 5 条的 Attention Items；Usage Trend
+        由独立接口加载。
+  /dashboard/usage-trend:
+    get:
+      tags:
+      - Dashboard
+      operationId: getDashboardUsageTrend
+      summary: 获取按 Category 分组的 Usage Trend
+      responses:
+        '200':
+          description: Usage Trend
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryUsageTrend'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: 只统计 Inventory Quantity Decrease 中 reasonCode=product_used 的数量，并按 Organization Timezone 的自然月汇总。
+      parameters:
+      - name: period
+        in: query
+        required: false
+        description: 时间范围；不传时为最近 12 个月
+        schema:
+          type: string
+          enum:
+          - last_6_months
+          - last_12_months
+          - last_24_months
+          default: last_12_months
+  /analytics:
+    get:
+      tags:
+      - Analytics
+      operationId: getAnalytics
+      summary: 获取 Analytics 月度页面数据
+      responses:
+        '200':
+          description: Analytics 月度页面数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Analytics'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: 一次返回月度汇总、Usage Breakdown、Forecasted Buying Needs、Recommended Order Timing 和 Upcoming Reorder Priorities。价格预测和
+        AI Insights 不属于 MVP。
+      parameters:
+      - name: analysisMonth
+        in: query
+        required: false
+        description: 可选。按 Organization Timezone 解释的分析月份；不传时为当前月，不允许未来月份。
+        schema:
+          type: string
+          pattern: ^\d{4}-(0[1-9]|1[0-2])$
+          examples:
+          - 2026-08
+  /analytics/consumption-trend:
+    get:
+      tags:
+      - Analytics
+      operationId: getAnalyticsConsumptionTrend
+      summary: 获取 Analytics Consumption Trend
+      responses:
+        '200':
+          description: Consumption Trend
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryUsageTrend'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: 只统计 Quantity Decrease 中 reasonCode=product_used 的数量，按 Organization Timezone 的自然月和 Category 汇总。
+      parameters:
+      - name: period
+        in: query
+        required: false
+        description: 趋势时间范围；不传时为最近 6 个月。
+        schema:
+          type: string
+          enum:
+          - last_6_months
+          - last_12_months
+          - last_24_months
+          default: last_6_months
+      - name: categoryId
+        in: query
+        required: false
+        description: Category ID；缺省表示全部
+        schema: *id001
+  /notifications:
+    get:
+      tags:
+      - Notifications
+      operationId: listNotifications
+      summary: 查询当前成员的 Active Notifications
+      responses:
+        '200':
+          description: Notification Cursor Page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPage'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - name: window
+        in: query
+        required: false
+        description: recent=最近7天；earlier=第8至30天
+        schema:
+          type: string
+          enum:
+          - recent
+          - earlier
+          default: recent
+      - name: cursor
+        in: query
+        required: false
+        description: 上一页返回的 nextCursor，原样传递
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: 返回数量
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 25
+  /notifications/unread-count:
+    get:
+      tags:
+      - Notifications
+      operationId: getNotificationUnreadCount
+      summary: 获取未读通知数量
+      responses:
+        '200':
+          description: Unread Count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnreadCount'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /notifications/{notificationId}/read:
+    post:
+      tags:
+      - Notifications
+      operationId: markNotificationRead
+      summary: 标记单条通知已读
+      responses:
+        '200':
+          description: Recipient State
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationRecipientState'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - &id010
+        name: notificationId
+        in: path
+        required: true
+        description: Notification ID
+        schema:
+          type: string
+          format: uuid
+  /notifications/read-all:
+    post:
+      tags:
+      - Notifications
+      operationId: markAllNotificationsRead
+      summary: 标记指定时间之前的通知已读
+      responses:
+        '200':
+          description: 批量更新结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadAllResult'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReadAllRequest'
+  /notifications/{notificationId}/dismissal:
+    post:
+      tags:
+      - Notifications
+      operationId: dismissNotification
+      summary: Dismiss 当前成员的一条通知
+      responses:
+        '200':
+          description: Recipient State
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationRecipientState'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - *id010
+  /notifications/settings:
+    get:
+      tags:
+      - Notifications
+      operationId: getNotificationSettings
+      summary: 获取通知类型、渠道和邮箱设置
+      responses:
+        '200':
+          description: Notification Settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettings'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    patch:
+      tags:
+      - Notifications
+      operationId: updateNotificationSettings
+      summary: 更新通知类型和渠道开关
+      responses:
+        '200':
+          description: 更新后的 Notification Settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettings'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: 可同时或分别提交 preferences、channels；未提交的分组和字段保持不变。通知邮箱通过独立验证流程修改。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationSettingsUpdate'
+  /notifications/settings/email-change-requests:
+    post:
+      tags:
+      - Notifications
+      operationId: requestNotificationEmailChange
+      summary: 请求验证新的通知邮箱
+      responses:
+        '200':
+          description: 验证邮件已请求
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: 请求频率超过限制
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 依赖服务暂不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailRequest'
+  /notifications/settings/email-verifications:
+    post:
+      tags:
+      - Notifications
+      operationId: verifyNotificationEmail
+      summary: 确认新的通知邮箱
+      responses:
+        '200':
+          description: Notification Settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettings'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailVerificationRequest'
+  /device-tokens/current:
+    put:
+      tags:
+      - Notifications
+      operationId: upsertCurrentDeviceToken
+      summary: 注册或刷新当前 App Installation Push Token
+      responses:
+        '200':
+          description: Device Token 状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceTokenResult'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceTokenRequest'
+    delete:
+      tags:
+      - Notifications
+      operationId: revokeCurrentDeviceToken
+      summary: 撤销当前 App Installation Push Token
+      responses:
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '204':
+          description: 操作成功，无响应体
+  /inventory/imports:
+    post:
+      tags:
+      - Inventory - Imports
+      operationId: createInventoryImport
+      summary: 上传文件并创建 Inventory Import
+      responses:
+        '400':
+          description: 请求格式或参数组合无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '413':
+          description: 请求或文件超过大小限制
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '415':
+          description: Content Type 或文件类型不支持
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: 请求频率超过限制
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 依赖服务暂不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '202':
+          description: 已接受处理的 Inventory Import
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryImport'
+      description: FastAPI 接收文件、校验后上传至 Supabase Private Storage、创建 Import 并将解析任务入队。文件不会由客户端直接上传至 Supabase。
+      parameters:
+      - *id006
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: PDF、PNG 或 JPEG，最大 5 MiB。
+  /inventory/imports/{importId}:
+    get:
+      tags:
+      - Inventory - Imports
+      operationId: getInventoryImport
+      summary: 查询 Import 状态和 Review 数据
+      responses:
+        '200':
+          description: Inventory Import
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryImport'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - &id011
+        name: importId
+        in: path
+        required: true
+        description: Inventory Import ID
+        schema:
+          type: string
+          format: uuid
+  /inventory/imports/{importId}/confirmation:
+    post:
+      tags:
+      - Inventory - Imports
+      operationId: confirmInventoryImport
+      summary: 整批确认并原子写入库存
+      responses:
+        '200':
+          description: Import Confirm Result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryImportConfirmResult'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 当前 Organization 下资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 资源状态、版本、重复数据或幂等请求冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      parameters:
+      - *id011
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InventoryImportConfirmRequest'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Supabase Access Token
+  schemas:
+    EntityReference:
+      type: object
+      required:
+      - id
+      - name
+      properties:
+        id: *id001
+        name:
+          type: string
+    CategoryReference:
+      allOf:
+      - $ref: '#/components/schemas/EntityReference'
+      - type: object
+        required:
+        - slug
+        properties:
+          slug:
+            type: string
+    Pagination:
+      type: object
+      required:
+      - page
+      - pageSize
+      - totalItems
+      - totalPages
+      - hasNextPage
+      - hasPreviousPage
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          maximum: 100
+        totalItems:
+          type: integer
+          minimum: 0
+        totalPages:
+          type: integer
+          minimum: 0
+        hasNextPage:
+          type: boolean
+        hasPreviousPage:
+          type: boolean
+    CursorPageInfo:
+      type: object
+      required:
+      - nextCursor
+      - hasNextPage
+      properties:
+        nextCursor:
+          type:
+          - string
+          - 'null'
+          description: 后端生成的不透明分页标记；客户端原样回传。
+        hasNextPage:
+          type: boolean
+    FieldError:
+      type: object
+      required:
+      - field
+      - code
+      - message
+      properties:
+        field:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+    ApiError:
+      type: object
+      required:
+      - code
+      - message
+      - requestId
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        requestId:
+          type: string
+        fieldErrors:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'
+        details:
+          type: object
+          additionalProperties: true
+    ErrorEnvelope:
+      type: object
+      required:
+      - error
+      properties:
+        error:
+          $ref: '#/components/schemas/ApiError'
+    InventoryItemReference:
+      type: object
+      required:
+      - id
+      properties:
+        id: *id001
+    ProductSummary:
+      type: object
+      required:
+      - id
+      - visibilityScope
+      - editable
+      - name
+      - brand
+      - category
+      - unit
+      - inventoryItem
+      properties:
+        id: *id001
+        visibilityScope:
+          type: string
+          enum:
+          - global
+          - organization
+        editable:
+          type: boolean
+        name:
+          type: string
+        brand:
+          $ref: '#/components/schemas/EntityReference'
+        category:
+          $ref: '#/components/schemas/CategoryReference'
+        manufacturer: &id012
+          type:
+          - string
+          - 'null'
+        mfgNumber: *id012
+        barcode: *id012
+        specification: *id012
+        unit:
+          $ref: '#/components/schemas/EntityReference'
+        imageUrl:
+          type:
+          - string
+          - 'null'
+          format: uri
+          description: 带有效期的临时图片读取地址。
+        inventoryItem:
+          anyOf:
+          - $ref: '#/components/schemas/InventoryItemReference'
+          - type: 'null'
+          description: 当前 Product 对应的诊所 Inventory Item；尚未加入库存时为 null。
+    ProductDetail:
+      allOf:
+      - $ref: '#/components/schemas/ProductSummary'
+      - type: object
+        required:
+        - sourceType
+        - status
+        - createdAt
+        - updatedAt
+        properties:
+          sourceType:
+            type: string
+            enum:
+            - imported
+            - manual
+            - admin_created
+          source: *id012
+          sourceProductCode: *id012
+          status:
+            type: string
+            enum:
+            - active
+            - inactive
+          createdAt:
+            type: string
+            format: date-time
+          updatedAt:
+            type: string
+            format: date-time
+    ProductPage:
+      type: object
+      required:
+      - items
+      - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductSummary'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    ManualProductInput:
+      type: object
+      required:
+      - name
+      - brandId
+      - categoryId
+      - unitId
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 300
+        brandId: *id001
+        categoryId: *id001
+        manufacturer:
+          type:
+          - string
+          - 'null'
+          maxLength: 200
+        mfgNumber:
+          type:
+          - string
+          - 'null'
+          maxLength: 160
+        barcode:
+          type:
+          - string
+          - 'null'
+          maxLength: 160
+        specification:
+          type:
+          - string
+          - 'null'
+          maxLength: 2000
+        unitId: *id001
+    ProductUpdateRequest:
+      $ref: '#/components/schemas/ManualProductInput'
+      description: 仅 Owner Organization 的 Manual Product 可修改。
+    InventorySettingsInput:
+      type: object
+      required:
+      - quantityOnHand
+      - lowStockThreshold
+      properties:
+        quantityOnHand: &id013
+          type: string
+          pattern: ^(0|[1-9]\d*)(\.\d{1,2})?$
+          examples:
+          - '0.00'
+          - '12.50'
+          description: 非负数量或金额；最多两位小数。具体字段可附加大于零约束。
+        lowStockThreshold: *id013
+        location:
+          type:
+          - string
+          - 'null'
+          maxLength: 240
+        vendor:
+          type:
+          - string
+          - 'null'
+          maxLength: 200
+        vendorItemNumber:
+          type:
+          - string
+          - 'null'
+          maxLength: 160
+        purchasePrice:
+          anyOf:
+          - *id013
+          - type: 'null'
+        expiryDate:
+          type:
+          - string
+          - 'null'
+          format: date
+        internalNote:
+          type:
+          - string
+          - 'null'
+          maxLength: 2000
+    DuplicateAcknowledgement:
+      type: object
+      required:
+      - acknowledgementToken
+      properties:
+        acknowledgementToken:
+          type: string
+    AddLibraryInventoryItemRequest:
+      title: Use an existing Product Library product
+      type: object
+      required:
+      - sourceType
+      - productId
+      - inventory
+      properties:
+        sourceType:
+          const: library_product
+        productId: *id001
+        inventory:
+          $ref: '#/components/schemas/InventorySettingsInput'
+        duplicateAcknowledgements:
+          type: array
+          items:
+            $ref: '#/components/schemas/DuplicateAcknowledgement'
+          default: []
+    AddManualInventoryItemRequest:
+      title: Create a Manual Product and add it to Inventory
+      type: object
+      required:
+      - sourceType
+      - product
+      - inventory
+      properties:
+        sourceType:
+          const: manual_product
+        product:
+          $ref: '#/components/schemas/ManualProductInput'
+        inventory:
+          $ref: '#/components/schemas/InventorySettingsInput'
+        duplicateAcknowledgements:
+          type: array
+          items:
+            $ref: '#/components/schemas/DuplicateAcknowledgement'
+          default: []
+    AddInventoryItemRequest:
+      oneOf:
+      - $ref: '#/components/schemas/AddLibraryInventoryItemRequest'
+      - $ref: '#/components/schemas/AddManualInventoryItemRequest'
+      discriminator:
+        propertyName: sourceType
+        mapping:
+          library_product: '#/components/schemas/AddLibraryInventoryItemRequest'
+          manual_product: '#/components/schemas/AddManualInventoryItemRequest'
+    InventoryItemSummary:
+      type: object
+      required:
+      - id
+      - product
+      - brand
+      - category
+      - quantityOnHand
+      - unit
+      - lowStockThreshold
+      - inventoryStatus
+      - expiryStatus
+      - version
+      - createdAt
+      - updatedAt
+      properties:
+        id: *id001
+        product:
+          $ref: '#/components/schemas/EntityReference'
+        brand:
+          $ref: '#/components/schemas/EntityReference'
+        category:
+          $ref: '#/components/schemas/CategoryReference'
+        mfgNumber: *id012
+        barcode: *id012
+        quantityOnHand: *id013
+        unit:
+          $ref: '#/components/schemas/EntityReference'
+        lowStockThreshold: *id013
+        inventoryStatus:
+          type: string
+          enum:
+          - in_stock
+          - low_stock
+          - out_of_stock
+        expiryDate:
+          type:
+          - string
+          - 'null'
+          format: date
+        expiryStatus:
+          type: string
+          enum:
+          - not_set
+          - normal
+          - expiring_soon
+          - expired
+        location: *id012
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    InventoryCapabilities:
+      type: object
+      required:
+      - canEditInventory
+      - canEditProduct
+      - canAdjustQuantity
+      - canRemove
+      properties:
+        canEditInventory:
+          type: boolean
+        canEditProduct:
+          type: boolean
+        canAdjustQuantity:
+          type: boolean
+        canRemove:
+          type: boolean
+    InventoryItemDetail:
+      allOf:
+      - $ref: '#/components/schemas/InventoryItemSummary'
+      - type: object
+        required:
+        - productDetail
+        - currencyCode
+        - capabilities
+        properties:
+          productDetail:
+            $ref: '#/components/schemas/ProductDetail'
+          vendor: *id012
+          vendorItemNumber: *id012
+          purchasePrice:
+            anyOf:
+            - *id013
+            - type: 'null'
+          currencyCode:
+            type: string
+            pattern: ^[A-Z]{3}$
+          internalNote: *id012
+          capabilities:
+            $ref: '#/components/schemas/InventoryCapabilities'
+    InventoryItemPage:
+      type: object
+      required:
+      - items
+      - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryItemSummary'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    InventoryItemUpdateRequest:
+      type: object
+      required:
+      - expectedVersion
+      properties:
+        expectedVersion:
+          type: integer
+          minimum: 1
+        lowStockThreshold: *id013
+        location:
+          type:
+          - string
+          - 'null'
+          maxLength: 240
+        vendor:
+          type:
+          - string
+          - 'null'
+          maxLength: 200
+        vendorItemNumber:
+          type:
+          - string
+          - 'null'
+          maxLength: 160
+        purchasePrice:
+          anyOf:
+          - *id013
+          - type: 'null'
+        expiryDate:
+          type:
+          - string
+          - 'null'
+          format: date
+        internalNote:
+          type:
+          - string
+          - 'null'
+          maxLength: 2000
+    InventoryItemUpdateResult:
+      type: object
+      required:
+      - changed
+      - inventoryItem
+      properties:
+        changed:
+          type: boolean
+        inventoryItem:
+          $ref: '#/components/schemas/InventoryItemDetail'
+    QuantityAdjustmentRequest:
+      type: object
+      required:
+      - expectedVersion
+      - mode
+      - quantity
+      - reasonCode
+      properties:
+        expectedVersion:
+          type: integer
+          minimum: 1
+        mode:
+          type: string
+          enum:
+          - increase
+          - decrease
+          - set_quantity
+          description: 数量调整方式：increase 增加、decrease 减少、set_quantity 直接设置为指定数量。
+        quantity: *id013
+        reasonCode:
+          type: string
+          enum:
+          - new_stock_received
+          - product_used
+          - damaged_or_expired
+          - physical_stock_count_correction
+          - data_correction
+          - other
+        note:
+          type:
+          - string
+          - 'null'
+          maxLength: 2000
+        occurredAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      allOf:
+      - if:
+          properties:
+            mode:
+              enum:
+              - increase
+              - decrease
+          required:
+          - mode
+        then:
+          properties:
+            quantity: &id014
+              type: string
+              pattern: ^(?:0\.(?:0[1-9]|[1-9]\d?)|[1-9]\d*(?:\.\d{1,2})?)$
+              examples:
+              - '0.01'
+              - '12.50'
+              description: 大于零的数量；最多两位小数。
+    Activity:
+      type: object
+      required:
+      - id
+      - inventoryItemId
+      - productId
+      - productName
+      - unitName
+      - eventType
+      - performedBy
+      - occurredAt
+      properties:
+        id: *id001
+        inventoryItemId: *id001
+        productId: *id001
+        productName:
+          type: string
+        unitName:
+          type: string
+        eventType:
+          type: string
+          enum:
+          - increase
+          - decrease
+          - set_quantity
+          - item_added
+          - item_edited
+          - item_removed
+          - purchase_receipt
+          - import_adjustment
+        quantityBefore:
+          anyOf:
+          - *id013
+          - type: 'null'
+        quantityDelta:
+          anyOf:
+          - &id015
+            type: string
+            pattern: ^-?(0|[1-9]\d*)(\.\d{1,2})?$
+            examples:
+            - '-2.00'
+            - '0.00'
+            - '12.50'
+          - type: 'null'
+        quantityAfter:
+          anyOf:
+          - *id013
+          - type: 'null'
+        reasonCode: *id012
+        reasonLabel: *id012
+        note: *id012
+        performedBy:
+          type: object
+          required:
+          - memberId
+          - displayName
+          properties:
+            memberId: *id001
+            displayName:
+              type: string
+        purchaseReceiptId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        inventoryImportId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+    ActivityPage:
+      type: object
+      required:
+      - items
+      - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Activity'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    QuantityAdjustmentResult:
+      type: object
+      required:
+      - inventoryItem
+      - activity
+      properties:
+        inventoryItem:
+          $ref: '#/components/schemas/InventoryItemSummary'
+        activity:
+          $ref: '#/components/schemas/Activity'
+    PurchaseListBlockers:
+      type: object
+      required:
+      - purchaseLists
+      properties:
+        purchaseLists:
+          type: array
+          items:
+            $ref: '#/components/schemas/EntityReference'
+    RegistrationRequest:
+      type: object
+      required:
+      - clinicName
+      - firstName
+      - lastName
+      - workEmail
+      - password
+      - termsAccepted
+      - privacyAccepted
+      properties:
+        clinicName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        workEmail:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 64
+          writeOnly: true
+        termsAccepted:
+          const: true
+        privacyAccepted:
+          const: true
+    RegistrationResult:
+      type: object
+      required:
+      - status
+      - nextAction
+      - message
+      - verificationEmailSent
+      properties:
+        status:
+          const: pending_verification
+        nextAction:
+          const: verify_email
+          description: 客户端应进入等待邮箱验证的页面。
+        message:
+          type: string
+          description: 可直接展示的默认英文提示文案。
+          example: Your account has been created. Please check your email and verify your account before signing in.
+        verificationEmailSent:
+          const: true
+          description: 本次注册响应成功前，验证邮件已经交给邮件服务发送。
+      example:
+        status: pending_verification
+        nextAction: verify_email
+        message: Your account has been created. Please check your email and verify your account before signing in.
+        verificationEmailSent: true
+    EmailRequest:
+      type: object
+      required:
+      - email
+      properties:
+        email:
+          type: string
+          format: email
+    MessageResult:
+      type: object
+      required:
+      - message
+      properties:
+        message:
+          type: string
+    ResendVerificationResult:
+      type: object
+      required:
+      - status
+      - message
+      properties:
+        status:
+          const: accepted
+          description: 请求已被接受，不表示 Email 一定存在或邮件已经送达。
+        message:
+          type: string
+          description: 不泄露账户状态、可直接展示的默认英文文案。
+      example:
+        status: accepted
+        message: If this email belongs to an account awaiting verification, a new verification email will be sent.
+    ActivationResult:
+      type: object
+      required:
+      - membershipStatus
+      - organizationStatus
+      properties:
+        membershipStatus:
+          const: active
+        organizationStatus:
+          const: active
+    MeResponse:
+      type: object
+      required:
+      - user
+      - membership
+      - organization
+      properties:
+        user:
+          type: object
+          required:
+          - id
+          - firstName
+          - lastName
+          - fullName
+          - email
+          properties:
+            id: *id001
+            firstName:
+              type: string
+            lastName:
+              type: string
+            fullName:
+              type: string
+            email:
+              type: string
+              format: email
+        membership:
+          type: object
+          required:
+          - id
+          - role
+          - status
+          properties:
+            id: *id001
+            role:
+              type: string
+              enum:
+              - admin
+              - manager
+              - member
+            status:
+              type: string
+              enum:
+              - pending_activation
+              - active
+              - disabled
+        organization:
+          type: object
+          required:
+          - id
+          - name
+          - timezone
+          - currencyCode
+          properties:
+            id: *id001
+            name:
+              type: string
+            timezone:
+              type: string
+              examples:
+              - America/Toronto
+            currencyCode:
+              type: string
+              examples:
+              - CAD
+    ProfileUpdateRequest:
+      type: object
+      required:
+      - firstName
+      - lastName
+      properties:
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 80
+    Profile:
+      type: object
+      required:
+      - id
+      - firstName
+      - lastName
+      - fullName
+      - email
+      properties:
+        id: *id001
+        firstName:
+          type: string
+        lastName:
+          type: string
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+          readOnly: true
+    Organization:
+      type: object
+      required:
+      - id
+      - name
+      - countryCode
+      - timezone
+      - currencyCode
+      - status
+      properties:
+        id: *id001
+        name:
+          type: string
+        addressLine1: *id012
+        addressLine2: *id012
+        city: *id012
+        subdivisionCode:
+          type:
+          - string
+          - 'null'
+          examples:
+          - CA-ON
+        postalCode: *id012
+        countryCode:
+          type: string
+          pattern: ^[A-Z]{2}$
+          examples:
+          - CA
+        timezone:
+          type: string
+          examples:
+          - America/Toronto
+        currencyCode:
+          type: string
+          pattern: ^[A-Z]{3}$
+          examples:
+          - CAD
+        status:
+          type: string
+          enum:
+          - pending_activation
+          - active
+          - suspended
+          - closed
+    OrganizationUpdateRequest:
+      type: object
+      required:
+      - name
+      - countryCode
+      - timezone
+      - currencyCode
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        addressLine1:
+          type:
+          - string
+          - 'null'
+          maxLength: 255
+        addressLine2:
+          type:
+          - string
+          - 'null'
+          maxLength: 255
+        city:
+          type:
+          - string
+          - 'null'
+          maxLength: 120
+        subdivisionCode:
+          type:
+          - string
+          - 'null'
+          maxLength: 10
+        postalCode:
+          type:
+          - string
+          - 'null'
+          maxLength: 32
+        countryCode:
+          type: string
+          pattern: ^[A-Z]{2}$
+        timezone:
+          type: string
+        currencyCode:
+          type: string
+          pattern: ^[A-Z]{3}$
+    OrganizationUpdateResult:
+      type: object
+      required:
+      - organization
+      - currencyChanged
+      properties:
+        organization:
+          $ref: '#/components/schemas/Organization'
+        currencyChanged:
+          type: boolean
+    LookupCreateRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+    EntityReferenceList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EntityReference'
+    CategoryList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CategoryReference'
+    StringList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            type: string
+    PurchaseListItem:
+      type: object
+      required:
+      - id
+      - inventoryItemId
+      - productName
+      - brandName
+      - unitName
+      - requestedQuantity
+      - receivedQuantity
+      - remainingQuantity
+      - receiptStatus
+      properties:
+        id: *id001
+        inventoryItemId: *id001
+        productName:
+          type: string
+        brandName:
+          type: string
+        unitName:
+          type: string
+        requestedQuantity: *id013
+        receivedQuantity: *id013
+        remainingQuantity: *id013
+        receiptStatus:
+          type: string
+          enum:
+          - pending
+          - partially_received
+          - received
+    PurchaseListSummary:
+      type: object
+      required:
+      - id
+      - name
+      - status
+      - progressStatus
+      - progress
+      - createdAt
+      - updatedAt
+      properties:
+        id: *id001
+        name:
+          type: string
+        notes: *id012
+        status:
+          type: string
+          enum:
+          - active
+          - completed
+        progressStatus:
+          type: string
+          enum:
+          - open
+          - partially_received
+          - all_received
+        progress:
+          type: object
+          required:
+          - receivedItemCount
+          - totalItemCount
+          - percentage
+          properties:
+            receivedItemCount:
+              type: integer
+              minimum: 0
+            totalItemCount:
+              type: integer
+              minimum: 0
+            percentage: *id013
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    PurchaseListDetail:
+      allOf:
+      - $ref: '#/components/schemas/PurchaseListSummary'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/PurchaseListItem'
+    PurchaseListMutationResult:
+      allOf:
+      - $ref: '#/components/schemas/PurchaseListSummary'
+      - type: object
+        properties:
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/PurchaseListItem'
+            description: 仅当 includeItems=true 时返回；清单无商品时为空数组。
+    PurchaseListPage:
+      type: object
+      required:
+      - items
+      - pagination
+      - counts
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PurchaseListSummary'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        counts:
+          type: object
+          required:
+          - active
+          - completed
+          properties:
+            active:
+              type: integer
+            completed:
+              type: integer
+    PurchaseListWriteRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        notes:
+          type:
+          - string
+          - 'null'
+          maxLength: 2000
+    PurchaseListCreateRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        notes:
+          type:
+          - string
+          - 'null'
+          maxLength: 2000
+        items:
+          type: array
+          minItems: 1
+          description: 可选。传入时在创建 Purchase List 的同一事务中加入已选 Inventory Items；不传时创建空清单。
+          items:
+            type: object
+            required:
+            - inventoryItemId
+            - requestedQuantity
+            properties:
+              inventoryItemId: *id001
+              requestedQuantity: *id014
+    PurchaseListItemsAddRequest:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+            - inventoryItemId
+            - requestedQuantity
+            properties:
+              inventoryItemId: *id001
+              requestedQuantity: *id014
+    PurchaseListItemsAddResult:
+      type: object
+      required:
+      - purchaseListId
+      - added
+      - skipped
+      properties:
+        purchaseListId: *id001
+        added:
+          type: array
+          items:
+            type: object
+            required:
+            - purchaseListItemId
+            - inventoryItemId
+            properties:
+              purchaseListItemId: *id001
+              inventoryItemId: *id001
+        skipped:
+          type: array
+          items:
+            type: object
+            required:
+            - inventoryItemId
+            - reason
+            properties:
+              inventoryItemId: *id001
+              reason:
+                type: string
+                enum:
+                - already_in_list
+    RequestedQuantityUpdateRequest:
+      type: object
+      required:
+      - requestedQuantity
+      properties:
+        requestedQuantity: *id014
+    PurchaseReceiptRequest:
+      type: object
+      required:
+      - quantityReceived
+      properties:
+        quantityReceived: *id014
+        vendorReceiptNumber:
+          type:
+          - string
+          - 'null'
+          maxLength: 160
+        receivedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    PurchaseReceipt:
+      type: object
+      required:
+      - id
+      - quantityReceived
+      - receivedAt
+      properties:
+        id: *id001
+        quantityReceived: *id013
+        vendorReceiptNumber: *id012
+        receivedAt:
+          type: string
+          format: date-time
+    PurchaseReceiptResult:
+      type: object
+      required:
+      - receipt
+      - purchaseListItem
+      properties:
+        receipt:
+          $ref: '#/components/schemas/PurchaseReceipt'
+        purchaseListItem:
+          $ref: '#/components/schemas/PurchaseListItem'
+    DashboardSummary:
+      type: object
+      required:
+      - totalItems
+      - lowStockItems
+      - outOfStockItems
+      - expiringSoonItems
+      properties:
+        totalItems:
+          type: integer
+          minimum: 0
+        lowStockItems:
+          type: integer
+          minimum: 0
+        outOfStockItems:
+          type: integer
+          minimum: 0
+        expiringSoonItems:
+          type: integer
+          minimum: 0
+    InventoryStatusBreakdown:
+      type: object
+      required:
+      - totalItems
+      - statuses
+      properties:
+        totalItems:
+          type: integer
+          minimum: 0
+        statuses:
+          type: array
+          minItems: 3
+          maxItems: 3
+          description: 固定包含 in_stock、low_stock、out_of_stock 三项；无数据项的 count 和 percentage 均为 0。
+          items:
+            type: object
+            required:
+            - status
+            - count
+            - percentage
+            properties:
+              status:
+                type: string
+                enum:
+                - in_stock
+                - low_stock
+                - out_of_stock
+              count:
+                type: integer
+                minimum: 0
+              percentage: *id013
+    DashboardTopUsedProduct:
+      type: object
+      required:
+      - inventoryItemId
+      - inventoryItemAvailable
+      - productName
+      - category
+      - quantityUsed
+      - unitName
+      - trendPercentage
+      properties:
+        inventoryItemId: *id001
+        inventoryItemAvailable:
+          type: boolean
+          description: false 表示该商品已移出当前库存；前端显示历史信息，但不跳转 Inventory Item Details。
+        productName:
+          type: string
+        category:
+          $ref: '#/components/schemas/CategoryReference'
+        quantityUsed: *id013
+        unitName:
+          type: string
+        trendPercentage:
+          anyOf:
+          - *id015
+          - type: 'null'
+          description: 相对前一个 30 天周期的百分比变化；前一周期用量为 0 时返回 null。
+    DashboardTopUsedProducts:
+      type: object
+      required:
+      - period
+      - items
+      properties:
+        period:
+          type: string
+          const: 30d
+          description: MVP 固定统计最近 30 天。
+        items:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/DashboardTopUsedProduct'
+    DashboardAttentionItem:
+      type: object
+      required:
+      - inventoryItemId
+      - productName
+      - category
+      - quantityOnHand
+      - unitName
+      - lowStockThreshold
+      - inventoryStatus
+      - expiryDate
+      - expiryStatus
+      - daysUntilExpiry
+      properties:
+        inventoryItemId: *id001
+        productName:
+          type: string
+        category:
+          $ref: '#/components/schemas/CategoryReference'
+        quantityOnHand: *id013
+        unitName:
+          type: string
+        lowStockThreshold: *id013
+        inventoryStatus:
+          type: string
+          enum:
+          - in_stock
+          - low_stock
+          - out_of_stock
+        expiryDate:
+          type:
+          - string
+          - 'null'
+          format: date
+        expiryStatus:
+          type: string
+          enum:
+          - not_set
+          - normal
+          - expiring_soon
+          - expired
+        daysUntilExpiry:
+          type:
+          - integer
+          - 'null'
+          description: 按 Organization Timezone 的本地日期计算；已过期时为负数，未设置 Expiry Date 时为 null。
+    DashboardAttentionItems:
+      type: object
+      required:
+      - outOfStock
+      - lowStock
+      - expiringSoon
+      properties:
+        outOfStock:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/DashboardAttentionItem'
+        lowStock:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/DashboardAttentionItem'
+        expiringSoon:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/DashboardAttentionItem'
+    Dashboard:
+      type: object
+      required:
+      - summary
+      - inventoryStatus
+      - topUsedProducts
+      - attentionItems
+      - asOf
+      properties:
+        summary:
+          $ref: '#/components/schemas/DashboardSummary'
+        inventoryStatus:
+          $ref: '#/components/schemas/InventoryStatusBreakdown'
+        topUsedProducts:
+          $ref: '#/components/schemas/DashboardTopUsedProducts'
+        attentionItems:
+          $ref: '#/components/schemas/DashboardAttentionItems'
+        asOf:
+          type: string
+          format: date-time
+      example:
+        summary:
+          totalItems: 120
+          lowStockItems: 8
+          outOfStockItems: 3
+          expiringSoonItems: 6
+        inventoryStatus:
+          totalItems: 120
+          statuses:
+          - status: in_stock
+            count: 109
+            percentage: '90.83'
+          - status: low_stock
+            count: 8
+            percentage: '6.67'
+          - status: out_of_stock
+            count: 3
+            percentage: '2.50'
+        topUsedProducts:
+          period: 30d
+          items:
+          - inventoryItemId: 8e41d6c8-b0ce-49de-aa8a-eef2f0da7322
+            inventoryItemAvailable: true
+            productName: Nitrile Exam Gloves
+            category:
+              id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+              name: Disposables
+              slug: disposables
+            quantityUsed: '42.00'
+            unitName: Box
+            trendPercentage: '12.50'
+        attentionItems:
+          outOfStock:
+          - inventoryItemId: 08f7c98d-0e52-433f-b555-05a8fc109e4e
+            productName: Etch Gel
+            category:
+              id: 0dd6feea-e03e-493f-9408-7a3e5b947c77
+              name: Restorative
+              slug: restorative
+            quantityOnHand: '0.00'
+            unitName: Syringe
+            lowStockThreshold: '5.00'
+            inventoryStatus: out_of_stock
+            expiryDate: null
+            expiryStatus: not_set
+            daysUntilExpiry: null
+          lowStock: []
+          expiringSoon: []
+        asOf: '2026-08-12T15:30:45Z'
+    CategoryUsageTrend:
+      type: object
+      required:
+      - period
+      - fromDate
+      - toDate
+      - timezone
+      - granularity
+      - series
+      - asOf
+      properties:
+        period:
+          type: string
+          enum:
+          - last_6_months
+          - last_12_months
+          - last_24_months
+        fromDate:
+          type: string
+          format: date
+        toDate:
+          type: string
+          format: date
+        timezone:
+          type: string
+          examples:
+          - America/Toronto
+        granularity:
+          type: string
+          const: month
+        series:
+          type: array
+          description: 只返回所选周期内有 Product Used 记录的 Category；每个返回的 Category 包含完整月份序列，无用量月份补 0。
+          items:
+            type: object
+            required:
+            - category
+            - points
+            properties:
+              category:
+                $ref: '#/components/schemas/CategoryReference'
+              points:
+                type: array
+                items:
+                  type: object
+                  required:
+                  - month
+                  - quantityUsed
+                  properties:
+                    month:
+                      type: string
+                      pattern: ^\d{4}-(0[1-9]|1[0-2])$
+                      examples:
+                      - 2026-08
+                    quantityUsed: *id013
+        asOf:
+          type: string
+          format: date-time
+      example:
+        period: last_6_months
+        fromDate: '2026-03-01'
+        toDate: '2026-08-12'
+        timezone: America/Toronto
+        granularity: month
+        series:
+        - category:
+            id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+            name: Disposables
+            slug: disposables
+          points:
+          - month: 2026-03
+            quantityUsed: '32.00'
+          - month: 2026-04
+            quantityUsed: '0.00'
+          - month: 2026-05
+            quantityUsed: '41.00'
+          - month: 2026-06
+            quantityUsed: '38.00'
+          - month: 2026-07
+            quantityUsed: '45.00'
+          - month: 2026-08
+            quantityUsed: '18.00'
+        asOf: '2026-08-12T15:30:45Z'
+    TimeSeries:
+      type: object
+      required:
+      - series
+      - asOf
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            required:
+            - name
+            - points
+            properties:
+              id:
+                type:
+                - string
+                - 'null'
+                format: uuid
+              name:
+                type: string
+              points:
+                type: array
+                items:
+                  type: object
+                  required:
+                  - period
+                  - quantity
+                  properties:
+                    period:
+                      type: string
+                    quantity: *id013
+        asOf:
+          type: string
+          format: date-time
+    InventoryItemSummaryList:
+      type: object
+      required:
+      - items
+      - asOf
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryItemSummary'
+        asOf:
+          type: string
+          format: date-time
+    AnalyticsSummary:
+      type: object
+      required:
+      - monthlyConsumption
+      - monthlyConsumptionChangePercentage
+      - itemsReachingReorder
+      - predictedStockouts
+      properties:
+        monthlyConsumption: *id013
+        monthlyConsumptionChangePercentage:
+          anyOf:
+          - *id015
+          - type: 'null'
+          description: 相对上一个自然月的百分比变化；上月用量为 0 时返回 null。
+        itemsReachingReorder:
+          type: integer
+          minimum: 0
+        predictedStockouts:
+          type: integer
+          minimum: 0
+    UsageBreakdown:
+      type: object
+      required:
+      - totalQuantityUsed
+      - items
+      properties:
+        totalQuantityUsed: *id013
+        items:
+          type: array
+          items:
+            type: object
+            required:
+            - category
+            - quantityUsed
+            - percentage
+            properties:
+              category:
+                $ref: '#/components/schemas/CategoryReference'
+              quantityUsed: *id013
+              percentage: *id013
+    ForecastItem:
+      type: object
+      required:
+      - inventoryItemId
+      - productName
+      - category
+      - currentStock
+      - unitName
+      - dataSufficiency
+      properties:
+        inventoryItemId: *id001
+        productName:
+          type: string
+        category:
+          $ref: '#/components/schemas/CategoryReference'
+        currentStock: *id013
+        unitName:
+          type: string
+        averageWeeklyUse:
+          anyOf:
+          - *id013
+          - type: 'null'
+        predictedRunoutDate:
+          type:
+          - string
+          - 'null'
+          format: date
+        recommendedQuantity:
+          anyOf:
+          - *id013
+          - type: 'null'
+        orderByDate:
+          type:
+          - string
+          - 'null'
+          format: date
+        dataSufficiency:
+          type: object
+          required:
+          - status
+          - completeWeeks
+          - reason
+          properties:
+            status:
+              type: string
+              enum:
+              - sufficient
+              - insufficient
+            completeWeeks:
+              type: integer
+              minimum: 0
+              maximum: 12
+            reason:
+              type:
+              - string
+              - 'null'
+    ForecastItemList:
+      type: object
+      required:
+      - items
+      - totalItems
+      properties:
+        items:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/ForecastItem'
+        totalItems:
+          type: integer
+          minimum: 0
+    ReorderPriorityItem:
+      type: object
+      required:
+      - inventoryItemId
+      - productName
+      - category
+      - priority
+      - orderByDate
+      properties:
+        inventoryItemId: *id001
+        productName:
+          type: string
+        category:
+          $ref: '#/components/schemas/CategoryReference'
+        priority:
+          type: string
+          enum:
+          - high
+          - medium
+          - reorder_soon
+          - planned
+        orderByDate:
+          type:
+          - string
+          - 'null'
+          format: date
+    ReorderPriorityList:
+      type: object
+      required:
+      - items
+      - totalItems
+      properties:
+        items:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/ReorderPriorityItem'
+        totalItems:
+          type: integer
+          minimum: 0
+    RecommendedOrderTiming:
+      type: object
+      required:
+      - month
+      - days
+      properties:
+        month:
+          type: string
+          pattern: ^\d{4}-(0[1-9]|1[0-2])$
+        days:
+          type: array
+          description: 只返回至少有一个建议下单商品的日期；同日多个商品时返回最高优先级和商品数量。
+          items:
+            type: object
+            required:
+            - date
+            - highestPriority
+            - itemCount
+            properties:
+              date:
+                type: string
+                format: date
+              highestPriority:
+                type: string
+                enum:
+                - high
+                - medium
+                - reorder_soon
+                - planned
+              itemCount:
+                type: integer
+                minimum: 1
+    Analytics:
+      type: object
+      required:
+      - analysisMonth
+      - fromDate
+      - toDate
+      - timezone
+      - summary
+      - usageBreakdown
+      - forecastedBuyingNeeds
+      - recommendedOrderTiming
+      - upcomingReorderPriorities
+      - asOf
+      properties:
+        analysisMonth:
+          type: string
+          pattern: ^\d{4}-(0[1-9]|1[0-2])$
+        fromDate:
+          type: string
+          format: date
+        toDate:
+          type: string
+          format: date
+        timezone:
+          type: string
+          examples:
+          - America/Toronto
+        summary:
+          $ref: '#/components/schemas/AnalyticsSummary'
+        usageBreakdown:
+          $ref: '#/components/schemas/UsageBreakdown'
+        forecastedBuyingNeeds:
+          $ref: '#/components/schemas/ForecastItemList'
+        recommendedOrderTiming:
+          $ref: '#/components/schemas/RecommendedOrderTiming'
+        upcomingReorderPriorities:
+          $ref: '#/components/schemas/ReorderPriorityList'
+        asOf:
+          type: string
+          format: date-time
+      example:
+        analysisMonth: 2026-08
+        fromDate: '2026-08-01'
+        toDate: '2026-08-12'
+        timezone: America/Toronto
+        summary:
+          monthlyConsumption: '406.00'
+          monthlyConsumptionChangePercentage: '12.00'
+          itemsReachingReorder: 18
+          predictedStockouts: 8
+        usageBreakdown:
+          totalQuantityUsed: '406.00'
+          items:
+          - category:
+              id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+              name: Disposables
+              slug: disposables
+            quantityUsed: '154.00'
+            percentage: '37.93'
+        forecastedBuyingNeeds:
+          items:
+          - inventoryItemId: 8e41d6c8-b0ce-49de-aa8a-eef2f0da7322
+            productName: Nitrile Exam Gloves
+            category:
+              id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+              name: Disposables
+              slug: disposables
+            currentStock: '8.00'
+            unitName: Box
+            averageWeeklyUse: '2.50'
+            predictedRunoutDate: '2026-09-03'
+            recommendedQuantity: '13.00'
+            orderByDate: '2026-08-20'
+            dataSufficiency:
+              status: sufficient
+              completeWeeks: 12
+              reason: null
+          totalItems: 1
+        recommendedOrderTiming:
+          month: 2026-08
+          days:
+          - date: '2026-08-15'
+            highestPriority: reorder_soon
+            itemCount: 2
+        upcomingReorderPriorities:
+          items:
+          - inventoryItemId: 8e41d6c8-b0ce-49de-aa8a-eef2f0da7322
+            productName: Nitrile Exam Gloves
+            category:
+              id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+              name: Disposables
+              slug: disposables
+            priority: reorder_soon
+            orderByDate: '2026-08-15'
+          totalItems: 1
+        asOf: '2026-08-12T15:30:45Z'
+    Notification:
+      type: object
+      required:
+      - id
+      - type
+      - title
+      - message
+      - productName
+      - inventoryItemAvailable
+      - createdAt
+      - navigation
+      properties:
+        id: *id001
+        type:
+          type: string
+          enum:
+          - low_stock
+          - out_of_stock
+          - expiring_soon
+        title:
+          type: string
+        message:
+          type: string
+        productName:
+          type: string
+        inventoryItemId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        inventoryItemAvailable:
+          type: boolean
+        readAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        navigation:
+          type: object
+          additionalProperties: true
+    NotificationPage:
+      type: object
+      required:
+      - items
+      - pageInfo
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        pageInfo:
+          $ref: '#/components/schemas/CursorPageInfo'
+    UnreadCount:
+      type: object
+      required:
+      - count
+      properties:
+        count:
+          type: integer
+          minimum: 0
+    NotificationRecipientState:
+      type: object
+      required:
+      - notificationId
+      properties:
+        notificationId: *id001
+        readAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        dismissedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    ReadAllRequest:
+      type: object
+      required:
+      - through
+      properties:
+        through:
+          type: string
+          format: date-time
+    ReadAllResult:
+      type: object
+      required:
+      - updatedCount
+      - through
+      properties:
+        updatedCount:
+          type: integer
+        through:
+          type: string
+          format: date-time
+    NotificationSettings:
+      type: object
+      required:
+      - preferences
+      - channels
+      - email
+      properties:
+        preferences:
+          type: object
+          required:
+          - lowStock
+          - outOfStock
+          - expiringSoon
+          properties:
+            lowStock:
+              type: boolean
+            outOfStock:
+              type: boolean
+            expiringSoon:
+              type: boolean
+        channels:
+          type: object
+          required:
+          - inAppEnabled
+          - emailEnabled
+          - pushEnabled
+          properties:
+            inAppEnabled:
+              type: boolean
+            emailEnabled:
+              type: boolean
+            pushEnabled:
+              type: boolean
+        email:
+          type: object
+          required:
+          - verifiedAddress
+          - pendingAddress
+          properties:
+            verifiedAddress:
+              type:
+              - string
+              - 'null'
+              format: email
+            pendingAddress:
+              type:
+              - string
+              - 'null'
+              format: email
+    NotificationPreferencesUpdate:
+      type: object
+      properties:
+        lowStock:
+          type: boolean
+        outOfStock:
+          type: boolean
+        expiringSoon:
+          type: boolean
+      minProperties: 1
+    NotificationChannelsUpdate:
+      type: object
+      properties:
+        inAppEnabled:
+          type: boolean
+        emailEnabled:
+          type: boolean
+        pushEnabled:
+          type: boolean
+      minProperties: 1
+    NotificationSettingsUpdate:
+      type: object
+      properties:
+        preferences:
+          $ref: '#/components/schemas/NotificationPreferencesUpdate'
+        channels:
+          $ref: '#/components/schemas/NotificationChannelsUpdate'
+      minProperties: 1
+      description: 至少提交 preferences 或 channels 之一；未提交的分组和字段保持不变。
+      example:
+        preferences:
+          lowStock: true
+          outOfStock: true
+        channels:
+          emailEnabled: true
+    EmailVerificationRequest:
+      type: object
+      required:
+      - token
+      properties:
+        token:
+          type: string
+          writeOnly: true
+    DeviceTokenRequest:
+      type: object
+      required:
+      - installationId
+      - platform
+      - token
+      properties:
+        installationId:
+          type: string
+          minLength: 8
+          maxLength: 200
+        platform:
+          type: string
+          enum:
+          - ios
+          - android
+        token:
+          type: string
+          writeOnly: true
+    DeviceTokenResult:
+      type: object
+      required:
+      - status
+      properties:
+        status:
+          type: string
+          enum:
+          - active
+          - revoked
+    InventoryImport:
+      type: object
+      required:
+      - id
+      - status
+      - createdAt
+      - updatedAt
+      properties:
+        id: *id001
+        status:
+          type: string
+          enum:
+          - uploaded
+          - processing
+          - review_required
+          - confirmed
+          - failed
+        rawExtraction:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+        reviewDraft:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+        confirmedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    InventoryImportConfirmRequest:
+      type: object
+      required:
+      - reviewedResult
+      properties:
+        reviewedResult:
+          type: object
+          required:
+          - schemaVersion
+          - rows
+          properties:
+            schemaVersion:
+              const: '1.0'
+            rows:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+    InventoryImportConfirmResult:
+      type: object
+      required:
+      - import
+      - createdInventoryItemIds
+      - updatedInventoryItemIds
+      - activityIds
+      properties:
+        import:
+          $ref: '#/components/schemas/InventoryImport'
+        createdInventoryItemIds:
+          type: array
+          items: *id001
+        updatedInventoryItemIds:
+          type: array
+          items: *id001
+        activityIds:
+          type: array
+          items: *id001
