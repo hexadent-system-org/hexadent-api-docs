@@ -3055,6 +3055,7 @@ components:
       type: object
       required:
       - clinicName
+      - clinicContactEmail
       - firstName
       - lastName
       - workEmail
@@ -3066,6 +3067,17 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+        clinicContactEmail:
+          type: string
+          format: email
+          maxLength: 320
+          examples:
+          - office@example.com
+          description: '诊所的主要业务联系邮箱，可以与 Work Email 相同。用于诊所账户、服务、安全及其他必要运营沟通，不代表同意接收营销邮件。
+
+
+            **UI helper text:** HexaDent will use this address for clinic account, service, security, and other essential
+            operational communications. It may be different from your sign-in email.'
         firstName:
           type: string
           minLength: 1
@@ -3256,6 +3268,7 @@ components:
       required:
       - id
       - name
+      - clinicContactEmail
       - countryCode
       - timezone
       - currencyCode
@@ -3264,6 +3277,11 @@ components:
         id: *id001
         name:
           type: string
+        clinicContactEmail:
+          type: string
+          format: email
+          readOnly: true
+          description: 注册时指定的诊所主要业务联系邮箱。MVP 中只读，不等同于当前用户的 Account Email。
         addressLine1: *id012
         addressLine2: *id012
         city: *id012
