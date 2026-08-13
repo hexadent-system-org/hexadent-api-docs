@@ -791,7 +791,7 @@ paths:
               $ref: '#/components/schemas/AddInventoryItemRequest'
             examples:
               libraryProduct:
-                summary: 1. 使用已有 Product Library 商品创建库存
+                summary: 1. 确认疑似重复后，使用已有 Product Library 商品创建库存
                 value:
                   sourceType: library_product
                   productId: 11111111-1111-4111-8111-111111111111
@@ -804,9 +804,10 @@ paths:
                     purchasePrice: '45.00'
                     expiryDate: null
                     internalNote: null
-                  duplicateAcknowledgements: []
+                  duplicateAcknowledgements:
+                  - productId: 55555555-5555-4555-8555-555555555555
               manualEntry:
-                summary: 2. Manual Entry：创建 Product 并加入库存
+                summary: 2. 首次提交：Manual Entry 创建 Product 并加入库存
                 value:
                   sourceType: manual_product
                   product:
