@@ -763,8 +763,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: Request Body 支持两种互斥形式，由 `sourceType` 区分：`library_product` 使用已有 `productId` 加入库存；`manual_product` 在同一事务中创建
-        Manual Product 并加入库存。
+      description: >-
+        Request Body 支持两种互斥形式，由 `sourceType` 区分：`library_product` 使用已有
+        `productId` 加入库存；`manual_product` 在同一事务中创建 Manual Product 并加入库存。
+
+
+        `duplicateAcknowledgements` 用于确认疑似重复商品。首次提交传空数组或省略；若后端返回
+        疑似重复商品，前端向用户展示后，用户选择仍然添加时，将已确认商品的 `productId`
+        放入数组并重新提交。该字段只能确认软重复提示，不能绕过相同 Product 已在有效库存中、
+        Barcode 唯一约束或其他硬冲突。
       parameters:
       - &id006
         name: Idempotency-Key
@@ -2685,17 +2692,12 @@ components:
     DuplicateAcknowledgement:
       type: object
       description: >-
-        对一次“疑似重复”提示的用户确认。首次提交不需要提供；当后端返回
-        `DUPLICATE_REVIEW_REQUIRED` 及 `acknowledgementToken` 后，只有用户明确选择继续添加时，
-        客户端才在重试请求中原样回传该 token。它只确认后端指出的软重复候选，不能绕过
-        相同 Product 已在有效库存中、Barcode 唯一约束或其他硬冲突。
+        用户已经确认仍要继续添加的一个疑似重复商品。后端必须重新校验该 Product 确实是
+        本次请求的疑似重复候选，并且对当前 Organization 可见。
       required:
-      - acknowledgementToken
+      - productId
       properties:
-        acknowledgementToken:
-          type: string
-          description: 后端针对特定疑似重复候选签发的短期、不透明确认标识；客户端不得自行生成或解析。
-          example: dup_ack_01J9Y7F4M8K2Q6R3V5T1
+        productId: *id001
     AddLibraryInventoryItemRequest:
       title: Use an existing Product Library product
       type: object
@@ -2712,8 +2714,8 @@ components:
         duplicateAcknowledgements:
           type: array
           description: >-
-            疑似重复确认列表。首次提交传空数组或省略；后端要求确认且用户选择继续后，
-            重试时回传后端提供的 `acknowledgementToken`。若有多个候选，需要回传用户已确认的全部候选。
+            疑似重复确认列表。首次提交传空数组或省略；用户确认继续后，重试时加入已确认
+            疑似重复商品的 `productId`。若确认多个候选，则分别加入数组。
           items:
             $ref: '#/components/schemas/DuplicateAcknowledgement'
           default: []
@@ -2734,8 +2736,8 @@ components:
         duplicateAcknowledgements:
           type: array
           description: >-
-            疑似重复确认列表。首次提交传空数组或省略；后端要求确认且用户选择继续后，
-            重试时回传后端提供的 `acknowledgementToken`。若有多个候选，需要回传用户已确认的全部候选。
+            疑似重复确认列表。首次提交传空数组或省略；用户确认继续后，重试时加入已确认
+            疑似重复商品的 `productId`。若确认多个候选，则分别加入数组。
           items:
             $ref: '#/components/schemas/DuplicateAcknowledgement'
           default: []
