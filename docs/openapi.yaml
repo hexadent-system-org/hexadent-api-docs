@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: HexaDent AI Inventory Platform API
-  version: 0.4.0
+  version: 0.5.0
   description: Web、iOS 与 Android MVP 的统一业务 API Contract。生产域名待定。
 servers:
 - url: /v1
@@ -1738,19 +1738,19 @@ paths:
           - last_12_months
           - last_24_months
           default: last_12_months
-  /analytics:
+  /analytics/overview:
     get:
       tags:
       - Analytics
-      operationId: getAnalytics
-      summary: 获取 Analytics 月度页面数据
+      operationId: getAnalyticsOverview
+      summary: 获取 Analytics Overview
       responses:
         '200':
-          description: Analytics 月度页面数据
+          description: Analytics Overview
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Analytics'
+                $ref: '#/components/schemas/AnalyticsOverview'
         '401':
           description: Access Token 缺失、无效或已过期
           content:
@@ -1769,11 +1769,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: 一次返回月度汇总、Usage Breakdown、最多 100 条 Forecasted Buying Needs，以及从 Analysis Month 开始的 4 个月 Recommended Order
-        Timing。Buying Needs 由前端每页展示 5 条并根据 Calendar 日期定位；Calendar 只基于本次实际返回的 Items 生成。Forecasted Spend、Upcoming Reorder Priorities
-        和 AI Insights 不属于 MVP。
+      description: 返回指定 Analysis Month 的顶部指标和 Usage Breakdown。Forecasted Buying Needs 与 Consumption Trend 由各自独立接口加载。
       parameters:
-      - name: analysisMonth
+      - &id010
+        name: analysisMonth
         in: query
         required: false
         description: 可选。按 Organization Timezone 解释的分析月份；不传时为当前月，不允许未来月份。
@@ -1782,6 +1781,41 @@ paths:
           pattern: ^\d{4}-(0[1-9]|1[0-2])$
           examples:
           - 2026-08
+  /analytics/forecasted-buying-needs:
+    get:
+      tags:
+      - Analytics
+      operationId: getForecastedBuyingNeeds
+      summary: 获取 Forecasted Buying Needs 与 Recommended Order Timing
+      responses:
+        '200':
+          description: Forecasted Buying Needs 模块数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForecastedBuyingNeedsResponse'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: 按同一个预测快照一次返回最多 100 条 Buying Needs Items 和 4 个自然月的 Calendar。前端每页展示 5 条，并在点击 Calendar 日期时直接在返回的完整 Items 数组中定位和高亮，不再请求后端。Calendar
+        只基于本次实际返回的 Items 生成。
+      parameters:
+      - *id010
   /analytics/consumption-trend:
     get:
       tags:
@@ -1946,7 +1980,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
       parameters:
-      - &id010
+      - &id011
         name: notificationId
         in: path
         required: true
@@ -2023,7 +2057,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
       parameters:
-      - *id010
+      - *id011
   /notifications/settings:
     get:
       tags:
@@ -2396,7 +2430,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
       parameters:
-      - &id011
+      - &id012
         name: importId
         in: path
         required: true
@@ -2448,7 +2482,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
       parameters:
-      - *id011
+      - *id012
       requestBody:
         required: true
         content:
@@ -2593,13 +2627,13 @@ components:
           $ref: '#/components/schemas/EntityReference'
         category:
           $ref: '#/components/schemas/CategoryReference'
-        manufacturer: &id012
+        manufacturer: &id013
           type:
           - string
           - 'null'
-        mfgNumber: *id012
-        barcode: *id012
-        specification: *id012
+        mfgNumber: *id013
+        barcode: *id013
+        specification: *id013
         unit:
           $ref: '#/components/schemas/EntityReference'
         imageUrl:
@@ -2629,8 +2663,8 @@ components:
             - imported
             - manual
             - admin_created
-          source: *id012
-          sourceProductCode: *id012
+          source: *id013
+          sourceProductCode: *id013
           status:
             type: string
             enum:
@@ -2698,14 +2732,14 @@ components:
       - quantityOnHand
       - lowStockThreshold
       properties:
-        quantityOnHand: &id013
+        quantityOnHand: &id014
           type: string
           pattern: ^(0|[1-9]\d*)(\.\d{1,2})?$
-          examples:
+          examples: &id018
           - '0.00'
           - '12.50'
           description: 非负数量或金额；最多两位小数。具体字段可附加大于零约束。
-        lowStockThreshold: *id013
+        lowStockThreshold: *id014
         location:
           type:
           - string
@@ -2723,7 +2757,7 @@ components:
           maxLength: 160
         purchasePrice:
           anyOf:
-          - *id013
+          - *id014
           - type: 'null'
         expiryDate:
           type:
@@ -2813,12 +2847,12 @@ components:
           $ref: '#/components/schemas/EntityReference'
         category:
           $ref: '#/components/schemas/CategoryReference'
-        mfgNumber: *id012
-        barcode: *id012
-        quantityOnHand: *id013
+        mfgNumber: *id013
+        barcode: *id013
+        quantityOnHand: *id014
         unit:
           $ref: '#/components/schemas/EntityReference'
-        lowStockThreshold: *id013
+        lowStockThreshold: *id014
         inventoryStatus:
           type: string
           enum:
@@ -2837,7 +2871,7 @@ components:
           - normal
           - expiring_soon
           - expired
-        location: *id012
+        location: *id013
         version:
           type: integer
           minimum: 1
@@ -2874,16 +2908,16 @@ components:
         properties:
           productDetail:
             $ref: '#/components/schemas/ProductDetail'
-          vendor: *id012
-          vendorItemNumber: *id012
+          vendor: *id013
+          vendorItemNumber: *id013
           purchasePrice:
             anyOf:
-            - *id013
+            - *id014
             - type: 'null'
           currencyCode:
             type: string
             pattern: ^[A-Z]{3}$
-          internalNote: *id012
+          internalNote: *id013
           capabilities:
             $ref: '#/components/schemas/InventoryCapabilities'
     InventoryItemPage:
@@ -2906,7 +2940,7 @@ components:
         expectedVersion:
           type: integer
           minimum: 1
-        lowStockThreshold: *id013
+        lowStockThreshold: *id014
         location:
           type:
           - string
@@ -2924,7 +2958,7 @@ components:
           maxLength: 160
         purchasePrice:
           anyOf:
-          - *id013
+          - *id014
           - type: 'null'
         expiryDate:
           type:
@@ -2964,7 +2998,7 @@ components:
           - decrease
           - set_quantity
           description: 数量调整方式：increase 增加、decrease 减少、set_quantity 直接设置为指定数量。
-        quantity: *id013
+        quantity: *id014
         reasonCode:
           type: string
           enum:
@@ -2995,7 +3029,7 @@ components:
           - mode
         then:
           properties:
-            quantity: &id014
+            quantity: &id015
               type: string
               pattern: ^(?:0\.(?:0[1-9]|[1-9]\d?)|[1-9]\d*(?:\.\d{1,2})?)$
               examples:
@@ -3034,11 +3068,11 @@ components:
           - import_adjustment
         quantityBefore:
           anyOf:
-          - *id013
+          - *id014
           - type: 'null'
         quantityDelta:
           anyOf:
-          - &id015
+          - &id016
             type: string
             pattern: ^-?(0|[1-9]\d*)(\.\d{1,2})?$
             examples:
@@ -3048,11 +3082,11 @@ components:
           - type: 'null'
         quantityAfter:
           anyOf:
-          - *id013
+          - *id014
           - type: 'null'
-        reasonCode: *id012
-        reasonLabel: *id012
-        note: *id012
+        reasonCode: *id013
+        reasonLabel: *id013
+        note: *id013
         performedBy:
           type: object
           required:
@@ -3337,16 +3371,16 @@ components:
           format: email
           readOnly: true
           description: 注册时指定的诊所主要业务联系邮箱。MVP 中只读，不等同于当前用户的 Account Email。
-        addressLine1: *id012
-        addressLine2: *id012
-        city: *id012
+        addressLine1: *id013
+        addressLine2: *id013
+        city: *id013
         subdivisionCode:
           type:
           - string
           - 'null'
           examples:
           - CA-ON
-        postalCode: *id012
+        postalCode: *id013
         countryCode:
           type: string
           pattern: ^[A-Z]{2}$
@@ -3479,12 +3513,12 @@ components:
           type: string
         brandName:
           type: string
-        specification: *id012
+        specification: *id013
         unitName:
           type: string
-        requestedQuantity: *id013
-        receivedQuantity: *id013
-        remainingQuantity: *id013
+        requestedQuantity: *id014
+        receivedQuantity: *id014
+        remainingQuantity: *id014
         receiptStatus:
           type: string
           enum:
@@ -3505,7 +3539,7 @@ components:
         id: *id001
         name:
           type: string
-        notes: *id012
+        notes: *id013
         status:
           type: string
           enum:
@@ -3530,7 +3564,7 @@ components:
             totalItemCount:
               type: integer
               minimum: 0
-            percentage: *id013
+            percentage: *id014
         createdAt:
           type: string
           format: date-time
@@ -3625,7 +3659,7 @@ components:
             - requestedQuantity
             properties:
               inventoryItemId: *id001
-              requestedQuantity: *id014
+              requestedQuantity: *id015
     PurchaseListItemsAddRequest:
       type: object
       required:
@@ -3641,7 +3675,7 @@ components:
             - requestedQuantity
             properties:
               inventoryItemId: *id001
-              requestedQuantity: *id014
+              requestedQuantity: *id015
     PurchaseListItemsAddResult:
       type: object
       required:
@@ -3678,13 +3712,13 @@ components:
       required:
       - requestedQuantity
       properties:
-        requestedQuantity: *id014
+        requestedQuantity: *id015
     PurchaseReceiptRequest:
       type: object
       required:
       - quantityReceived
       properties:
-        quantityReceived: *id014
+        quantityReceived: *id015
         vendorReceiptNumber:
           type:
           - string
@@ -3703,8 +3737,8 @@ components:
       - receivedAt
       properties:
         id: *id001
-        quantityReceived: *id013
-        vendorReceiptNumber: *id012
+        quantityReceived: *id014
+        vendorReceiptNumber: *id013
         receivedAt:
           type: string
           format: date-time
@@ -3762,7 +3796,7 @@ components:
               count:
                 type: integer
                 minimum: 0
-              percentage: *id013
+              percentage: *id014
     DashboardTopUsedProduct:
       type: object
       required:
@@ -3782,12 +3816,12 @@ components:
           type: string
         category:
           $ref: '#/components/schemas/CategoryReference'
-        quantityUsed: *id013
+        quantityUsed: *id014
         unitName:
           type: string
         trendPercentage:
           anyOf:
-          - *id015
+          - *id016
           - type: 'null'
           description: 相对前一个 30 天周期的百分比变化；前一周期用量为 0 时返回 null。
     DashboardTopUsedProducts:
@@ -3824,10 +3858,10 @@ components:
           type: string
         category:
           $ref: '#/components/schemas/CategoryReference'
-        quantityOnHand: *id013
+        quantityOnHand: *id014
         unitName:
           type: string
-        lowStockThreshold: *id013
+        lowStockThreshold: *id014
         inventoryStatus:
           type: string
           enum:
@@ -3921,6 +3955,10 @@ components:
         asOf:
           type: string
           format: date-time
+          examples: &id017
+          - '2026-08-12T11:30:45-04:00'
+          description: 服务器生成该统计或预测快照的时间。必须转换为当前 Organization Timezone，并以包含 UTC Offset 的 RFC 3339 Date-Time 返回；不得返回无 Offset
+            的本地时间。
       example:
         summary:
           totalItems: 120
@@ -3977,7 +4015,7 @@ components:
           itemsRemaining: 11
           readyToComplete: 1
           recentLists: []
-        asOf: '2026-08-12T15:30:45Z'
+        asOf: '2026-08-12T11:30:45-04:00'
     CategoryUsageTrend:
       type: object
       required:
@@ -4032,10 +4070,13 @@ components:
                       pattern: ^\d{4}-(0[1-9]|1[0-2])$
                       examples:
                       - 2026-08
-                    quantityUsed: *id013
+                    quantityUsed: *id014
         asOf:
           type: string
           format: date-time
+          examples: *id017
+          description: 服务器生成该统计或预测快照的时间。必须转换为当前 Organization Timezone，并以包含 UTC Offset 的 RFC 3339 Date-Time 返回；不得返回无 Offset
+            的本地时间。
       example:
         period: last_6_months
         fromDate: '2026-03-01'
@@ -4060,7 +4101,7 @@ components:
             quantityUsed: '45.00'
           - month: 2026-08
             quantityUsed: '18.00'
-        asOf: '2026-08-12T15:30:45Z'
+        asOf: '2026-08-12T11:30:45-04:00'
     AnalyticsConsumptionTrend:
       type: object
       required:
@@ -4119,7 +4160,7 @@ components:
                     month:
                       type: string
                       pattern: ^\d{4}-(0[1-9]|1[0-2])$
-                    quantityUsed: *id013
+                    quantityUsed: *id014
               forecastPoints:
                 type: array
                 maxItems: 2
@@ -4133,7 +4174,7 @@ components:
                     month:
                       type: string
                       pattern: ^\d{4}-(0[1-9]|1[0-2])$
-                    predictedQuantityUsed: *id013
+                    predictedQuantityUsed: *id014
               forecastDataSufficiency:
                 type: object
                 required:
@@ -4161,6 +4202,9 @@ components:
         asOf:
           type: string
           format: date-time
+          examples: *id017
+          description: 服务器生成该统计或预测快照的时间。必须转换为当前 Organization Timezone，并以包含 UTC Offset 的 RFC 3339 Date-Time 返回；不得返回无 Offset
+            的本地时间。
       example:
         period: last_6_months
         fromDate: '2026-03-01'
@@ -4187,7 +4231,7 @@ components:
             status: sufficient
             completeWeeks: 12
             reason: null
-        asOf: '2026-08-12T15:30:45Z'
+        asOf: '2026-08-12T11:30:45-04:00'
     TimeSeries:
       type: object
       required:
@@ -4219,10 +4263,13 @@ components:
                   properties:
                     period:
                       type: string
-                    quantity: *id013
+                    quantity: *id014
         asOf:
           type: string
           format: date-time
+          examples: *id017
+          description: 服务器生成该统计或预测快照的时间。必须转换为当前 Organization Timezone，并以包含 UTC Offset 的 RFC 3339 Date-Time 返回；不得返回无 Offset
+            的本地时间。
     InventoryItemSummaryList:
       type: object
       required:
@@ -4236,6 +4283,9 @@ components:
         asOf:
           type: string
           format: date-time
+          examples: *id017
+          description: 服务器生成该统计或预测快照的时间。必须转换为当前 Organization Timezone，并以包含 UTC Offset 的 RFC 3339 Date-Time 返回；不得返回无 Offset
+            的本地时间。
     AnalyticsSummary:
       type: object
       required:
@@ -4244,10 +4294,10 @@ components:
       - itemsReachingReorder
       - predictedStockouts
       properties:
-        monthlyConsumption: *id013
+        monthlyConsumption: *id014
         monthlyConsumptionChangePercentage:
           anyOf:
-          - *id015
+          - *id016
           - type: 'null'
           description: 相对上一个自然月的百分比变化；上月用量为 0 时返回 null。
         itemsReachingReorder:
@@ -4262,7 +4312,7 @@ components:
       - totalQuantityUsed
       - items
       properties:
-        totalQuantityUsed: *id013
+        totalQuantityUsed: *id014
         items:
           type: array
           items:
@@ -4274,86 +4324,119 @@ components:
             properties:
               category:
                 $ref: '#/components/schemas/CategoryReference'
-              quantityUsed: *id013
-              percentage: *id013
+              quantityUsed: *id014
+              percentage: *id014
     ForecastPurchaseListReference:
       type: object
+      description: 该 Buying Need 对应商品所在的一个 Active Purchase List，以及该商品在该 List 中的收货状态。
       required:
       - id
       - name
       - receiptStatus
       properties:
-        id: *id001
+        id:
+          type: string
+          format: uuid
+          description: Purchase List ID；前端用它进入 Purchase List Detail。
         name:
           type: string
+          description: Purchase List Name。
         receiptStatus:
           type: string
           enum:
           - pending
           - partially_received
           - received
+          description: 当前 Forecast Item 在该 Purchase List 中的收货状态。
+    ForecastDataSufficiency:
+      type: object
+      description: 该商品是否有足够的 Product Used 历史数据用于计算预测字段。
+      required:
+      - status
+      - completeWeeks
+      - reason
+      properties:
+        status:
+          type: string
+          enum:
+          - sufficient
+          - insufficient
+        completeWeeks:
+          type: integer
+          minimum: 0
+          maximum: 12
+          description: 实际用于评估的完整历史周数，最多 12 周。
+        reason:
+          type:
+          - string
+          - 'null'
+          enum:
+          - fewer_than_4_complete_weeks
+          - no_valid_consumption
+          - null
+          description: 数据充分时为 null；不足时返回稳定 Reason Code。
     ForecastItem:
       type: object
+      description: Forecasted Buying Needs 表格中的一行。数量字段均使用该商品的 Unit。
       required:
       - inventoryItemId
       - productName
       - category
       - currentStock
       - unitName
+      - averageWeeklyUse
+      - predictedRunoutDate
+      - recommendedQuantity
+      - orderByDate
       - activePurchaseLists
       - dataSufficiency
       properties:
-        inventoryItemId: *id001
+        inventoryItemId:
+          type: string
+          format: uuid
+          description: Inventory Item ID。
         productName:
           type: string
+          description: 当前 Product Name。
         category:
           $ref: '#/components/schemas/CategoryReference'
-        currentStock: *id013
+        currentStock:
+          type: string
+          pattern: ^(0|[1-9]\d*)(\.\d{1,2})?$
+          examples: *id018
+          description: 当前 Quantity On Hand。
         unitName:
           type: string
+          description: 所有数量字段使用的 Unit。
         averageWeeklyUse:
           anyOf:
-          - *id013
+          - *id014
           - type: 'null'
+          description: 最多最近 12 个完整周的平均 Product Used 数量；数据不足时为 null。
         predictedRunoutDate:
           type:
           - string
           - 'null'
           format: date
+          description: 预计 Current Stock 降至 0 的诊所本地日期；无法预测时为 null。
         recommendedQuantity:
           anyOf:
-          - *id013
+          - *id014
           - type: 'null'
+          description: 覆盖未来 30 天预计消耗并恢复 Minimum Quantity 的建议购买数量；无法预测时为 null。
         orderByDate:
           type:
           - string
           - 'null'
           format: date
+          description: 建议下单日期，通常为预计达到 Minimum Quantity 日期前 7 天；无法预测时为 null。
         activePurchaseLists:
           type: array
           description: 该 Inventory Item 所在的全部 Active Purchase Lists；不在任何 Active List 时返回空数组。
           items:
             $ref: '#/components/schemas/ForecastPurchaseListReference'
         dataSufficiency:
-          type: object
-          required:
-          - status
-          - completeWeeks
-          - reason
-          properties:
-            status:
-              type: string
-              enum:
-              - sufficient
-              - insufficient
-            completeWeeks:
-              type: integer
-              minimum: 0
-              maximum: 12
-            reason:
-              type:
-              - string
-              - 'null'
+          $ref: '#/components/schemas/ForecastDataSufficiency'
     ForecastItemList:
       type: object
       description: 后端固定按 orderByDate ASC NULLS LAST、predictedRunoutDate ASC NULLS LAST、productName ASC、inventoryItemId ASC
@@ -4380,8 +4463,49 @@ components:
         truncated:
           type: boolean
           description: totalItems 大于 maxItems 时为 true；Calendar 仍只基于本次实际返回的 items 生成。
+    RecommendedOrderDay:
+      type: object
+      description: Calendar 中一个有 Buying Needs 的高亮日期。
+      required:
+      - date
+      - highestPriority
+      - itemCount
+      properties:
+        date:
+          type: string
+          format: date
+          description: 与 ForecastItem.orderByDate 对应的诊所本地日期。
+        highestPriority:
+          type: string
+          enum:
+          - high
+          - medium
+          - reorder_soon
+          - planned
+          description: 该日期所有匹配 Items 的最高优先级，仅用于 Calendar 颜色提示。
+        itemCount:
+          type: integer
+          minimum: 1
+          description: 本次实际返回的 forecastedBuyingNeeds.items 中，orderByDate 等于该日期的 Item 数量。
+    RecommendedOrderMonth:
+      type: object
+      description: Recommended Order Timing Calendar 中的一个自然月。
+      required:
+      - month
+      - days
+      properties:
+        month:
+          type: string
+          pattern: ^\d{4}-(0[1-9]|1[0-2])$
+          description: Calendar Month，格式 YYYY-MM。
+        days:
+          type: array
+          description: 按 date ASC 返回；无建议下单日期时为空数组。只基于本次实际返回的 Buying Needs Items 生成。
+          items:
+            $ref: '#/components/schemas/RecommendedOrderDay'
     RecommendedOrderTiming:
       type: object
+      description: Forecasted Buying Needs 的 Calendar 聚合视图。
       required:
       - fromMonth
       - toMonth
@@ -4390,48 +4514,21 @@ components:
         fromMonth:
           type: string
           pattern: ^\d{4}-(0[1-9]|1[0-2])$
+          description: 允许查看的第一个月份，等于 Analysis Month。
         toMonth:
           type: string
           pattern: ^\d{4}-(0[1-9]|1[0-2])$
+          description: 允许查看的最后一个月份，等于 Analysis Month 后第 3 个自然月。
         months:
           type: array
           minItems: 4
           maxItems: 4
-          description: 固定包含 Analysis Month 及之后 3 个自然月；没有建议下单日期的月份仍返回 days=[]。
+          description: 固定按月份升序包含 Analysis Month 及之后 3 个自然月。
           items:
-            type: object
-            required:
-            - month
-            - days
-            properties:
-              month:
-                type: string
-                pattern: ^\d{4}-(0[1-9]|1[0-2])$
-              days:
-                type: array
-                description: 只返回本次 forecastedBuyingNeeds.items 中至少有一个 Item 的 Order By 日期；itemCount 也只统计本次实际返回的 Items。
-                items:
-                  type: object
-                  required:
-                  - date
-                  - highestPriority
-                  - itemCount
-                  properties:
-                    date:
-                      type: string
-                      format: date
-                    highestPriority:
-                      type: string
-                      enum:
-                      - high
-                      - medium
-                      - reorder_soon
-                      - planned
-                    itemCount:
-                      type: integer
-                      minimum: 1
-    Analytics:
+            $ref: '#/components/schemas/RecommendedOrderMonth'
+    AnalyticsOverview:
       type: object
+      description: Analytics 页面的顶部指标与 Usage Breakdown。
       required:
       - analysisMonth
       - fromDate
@@ -4439,8 +4536,6 @@ components:
       - timezone
       - summary
       - usageBreakdown
-      - forecastedBuyingNeeds
-      - recommendedOrderTiming
       - asOf
       properties:
         analysisMonth:
@@ -4460,13 +4555,12 @@ components:
           $ref: '#/components/schemas/AnalyticsSummary'
         usageBreakdown:
           $ref: '#/components/schemas/UsageBreakdown'
-        forecastedBuyingNeeds:
-          $ref: '#/components/schemas/ForecastItemList'
-        recommendedOrderTiming:
-          $ref: '#/components/schemas/RecommendedOrderTiming'
         asOf:
           type: string
           format: date-time
+          examples: *id017
+          description: 服务器生成该统计或预测快照的时间。必须转换为当前 Organization Timezone，并以包含 UTC Offset 的 RFC 3339 Date-Time 返回；不得返回无 Offset
+            的本地时间。
       example:
         analysisMonth: 2026-08
         fromDate: '2026-08-01'
@@ -4486,6 +4580,38 @@ components:
               slug: disposables
             quantityUsed: '154.00'
             percentage: '37.93'
+        asOf: '2026-08-12T11:30:45-04:00'
+    ForecastedBuyingNeedsResponse:
+      type: object
+      description: Forecasted Buying Needs 列表及其 Recommended Order Timing Calendar；两者来自同一预测快照和同一实际返回的 Items 集合。
+      required:
+      - analysisMonth
+      - timezone
+      - forecastedBuyingNeeds
+      - recommendedOrderTiming
+      - asOf
+      properties:
+        analysisMonth:
+          type: string
+          pattern: ^\d{4}-(0[1-9]|1[0-2])$
+          description: 按 Organization Timezone 解释的分析月份。
+        timezone:
+          type: string
+          examples:
+          - America/Toronto
+        forecastedBuyingNeeds:
+          $ref: '#/components/schemas/ForecastItemList'
+        recommendedOrderTiming:
+          $ref: '#/components/schemas/RecommendedOrderTiming'
+        asOf:
+          type: string
+          format: date-time
+          examples: *id017
+          description: 服务器生成该统计或预测快照的时间。必须转换为当前 Organization Timezone，并以包含 UTC Offset 的 RFC 3339 Date-Time 返回；不得返回无 Offset
+            的本地时间。 这里表示本次采购预测快照的数据时间点。
+      example:
+        analysisMonth: 2026-08
+        timezone: America/Toronto
         forecastedBuyingNeeds:
           items:
           - inventoryItemId: 8e41d6c8-b0ce-49de-aa8a-eef2f0da7322
@@ -4546,7 +4672,7 @@ components:
             days: []
           - month: 2026-11
             days: []
-        asOf: '2026-08-12T15:30:45Z'
+        asOf: '2026-08-12T11:30:45-04:00'
     Notification:
       type: object
       required:
