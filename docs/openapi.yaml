@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: HexaDent AI Inventory Platform API
-  version: 0.3.0
+  version: 0.4.0
   description: Web、iOS 与 Android MVP 的统一业务 API Contract。生产域名待定。
 servers:
 - url: /v1
@@ -25,7 +25,7 @@ tags:
     - **Sign out:** `signOut()` 清除当前浏览器 Session。
 
 
-    完整页面路由、提示文案与错误处理见 `api-design.md` 的 **2.2 Login and Password**。下方 Operations 均为 FastAPI Contract。'
+    页面路由、提示文案与客户端错误处理由 Web / App 需求与设计文档定义；下方 Operations 均为 FastAPI Contract。'
 - name: Account
 - name: Lookups
 - name: Products
@@ -763,15 +763,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: >-
-        Request Body 支持两种互斥形式，由 `sourceType` 区分：`library_product` 使用已有
-        `productId` 加入库存；`manual_product` 在同一事务中创建 Manual Product 并加入库存。
+      description: 'Request Body 支持两种互斥形式，由 `sourceType` 区分：`library_product` 使用已有 `productId` 加入库存；`manual_product` 在同一事务中创建
+        Manual Product 并加入库存。
 
 
-        `duplicateAcknowledgements` 用于确认疑似重复商品。首次提交传空数组或省略；若后端返回
-        疑似重复商品，前端向用户展示后，用户选择仍然添加时，将已确认商品的 `productId`
-        放入数组并重新提交。该字段只能确认软重复提示，不能绕过相同 Product 已在有效库存中、
-        Barcode 唯一约束或其他硬冲突。
+        `duplicateAcknowledgements` 用于确认疑似重复商品。首次提交传空数组或省略；若后端返回疑似重复商品，前端向用户展示后，用户选择仍然添加时，将已确认商品的 `productId` 放入数组并重新提交。该字段只能确认软重复提示，不能绕过相同
+        Product 已在有效库存中、Barcode 唯一约束或其他硬冲突。'
       parameters:
       - &id006
         name: Idempotency-Key
@@ -1695,8 +1692,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: 无 Query 参数。一次返回 Summary、Inventory Status、最近 30 天 Top Used Products，以及三组最多 5 条的 Attention Items；Usage Trend
-        由独立接口加载。
+      description: 无 Query 参数。一次返回 Summary、Inventory Items by Category、最近 30 天 Top Used Products、三组最多 5 条的 Attention Items，以及
+        Purchase List Overview；Usage Trend 由独立接口加载。Category 聚合返回全部真实类别，客户端展示前 5 项并将其余项合并为 Other。
   /dashboard/usage-trend:
     get:
       tags:
@@ -1772,8 +1769,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: 一次返回月度汇总、Usage Breakdown、Forecasted Buying Needs、Recommended Order Timing 和 Upcoming Reorder Priorities。价格预测和
-        AI Insights 不属于 MVP。
+      description: 一次返回月度汇总、Usage Breakdown、最多 100 条 Forecasted Buying Needs，以及从 Analysis Month 开始的 4 个月 Recommended Order
+        Timing。Buying Needs 由前端每页展示 5 条并根据 Calendar 日期定位；Calendar 只基于本次实际返回的 Items 生成。Forecasted Spend、Upcoming Reorder Priorities
+        和 AI Insights 不属于 MVP。
       parameters:
       - name: analysisMonth
         in: query
@@ -1792,11 +1790,11 @@ paths:
       summary: 获取 Analytics Consumption Trend
       responses:
         '200':
-          description: Consumption Trend
+          description: Consumption Trend（历史 + 未来 2 个月预测）
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CategoryUsageTrend'
+                $ref: '#/components/schemas/AnalyticsConsumptionTrend'
         '401':
           description: Access Token 缺失、无效或已过期
           content:
@@ -1815,7 +1813,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: 只统计 Quantity Decrease 中 reasonCode=product_used 的数量，按 Organization Timezone 的自然月和 Category 汇总。
+      description: 历史部分只统计 Quantity Decrease 中 reasonCode=product_used 的数量，按 Organization Timezone 的自然月和 Category 汇总；另返回未来
+        2 个自然月预测。每个 Category 独立返回预测数据充分性；不足时 forecastPoints=[]。
       parameters:
       - name: period
         in: query
@@ -2237,6 +2236,52 @@ paths:
         '204':
           description: 操作成功，无响应体
   /inventory/imports:
+    get:
+      tags:
+      - Inventory - Imports
+      operationId: listInventoryImports
+      summary: 查询 Inventory Import History
+      responses:
+        '200':
+          description: Inventory Import 分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryImportPage'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: 仅 Web 使用。按 createdAt DESC、id DESC 返回当前 Organization 的 Import 记录；不返回 rawExtraction 或 reviewDraft。
+      parameters:
+      - name: status
+        in: query
+        required: false
+        description: 可选；只返回指定状态的 Imports。
+        schema:
+          type: string
+          enum:
+          - uploaded
+          - processing
+          - review_required
+          - confirmed
+          - failed
+      - *id003
+      - *id004
     post:
       tags:
       - Inventory - Imports
@@ -2692,9 +2737,7 @@ components:
           maxLength: 2000
     DuplicateAcknowledgement:
       type: object
-      description: >-
-        用户已经确认仍要继续添加的一个疑似重复商品。后端必须重新校验该 Product 确实是
-        本次请求的疑似重复候选，并且对当前 Organization 可见。
+      description: 用户已经确认仍要继续添加的一个疑似重复商品。后端必须重新校验该 Product 确实是本次请求的疑似重复候选，并且对当前 Organization 可见。
       required:
       - productId
       properties:
@@ -2714,9 +2757,7 @@ components:
           $ref: '#/components/schemas/InventorySettingsInput'
         duplicateAcknowledgements:
           type: array
-          description: >-
-            疑似重复确认列表。首次提交传空数组或省略；用户确认继续后，重试时加入已确认
-            疑似重复商品的 `productId`。若确认多个候选，则分别加入数组。
+          description: 疑似重复确认列表。首次提交传空数组或省略；用户确认继续后，重试时加入已确认疑似重复商品的 `productId`。若确认多个候选，则分别加入数组。
           items:
             $ref: '#/components/schemas/DuplicateAcknowledgement'
           default: []
@@ -2736,9 +2777,7 @@ components:
           $ref: '#/components/schemas/InventorySettingsInput'
         duplicateAcknowledgements:
           type: array
-          description: >-
-            疑似重复确认列表。首次提交传空数组或省略；用户确认继续后，重试时加入已确认
-            疑似重复商品的 `productId`。若确认多个候选，则分别加入数组。
+          description: 疑似重复确认列表。首次提交传空数组或省略；用户确认继续后，重试时加入已确认疑似重复商品的 `productId`。若确认多个候选，则分别加入数组。
           items:
             $ref: '#/components/schemas/DuplicateAcknowledgement'
           default: []
@@ -3427,6 +3466,7 @@ components:
       - inventoryItemId
       - productName
       - brandName
+      - specification
       - unitName
       - requestedQuantity
       - receivedQuantity
@@ -3439,6 +3479,7 @@ components:
           type: string
         brandName:
           type: string
+        specification: *id012
         unitName:
           type: string
         requestedQuantity: *id013
@@ -3697,33 +3738,27 @@ components:
         expiringSoonItems:
           type: integer
           minimum: 0
-    InventoryStatusBreakdown:
+    InventoryCategoryBreakdown:
       type: object
       required:
       - totalItems
-      - statuses
+      - categories
       properties:
         totalItems:
           type: integer
           minimum: 0
-        statuses:
+        categories:
           type: array
-          minItems: 3
-          maxItems: 3
-          description: 固定包含 in_stock、low_stock、out_of_stock 三项；无数据项的 count 和 percentage 均为 0。
+          description: 返回全部真实 Category，按 count DESC、Category Name ASC 排序；不返回合成的 Other。客户端展示前 5 项，并将其余项合并为 Other。
           items:
             type: object
             required:
-            - status
+            - category
             - count
             - percentage
             properties:
-              status:
-                type: string
-                enum:
-                - in_stock
-                - low_stock
-                - out_of_stock
+              category:
+                $ref: '#/components/schemas/CategoryReference'
               count:
                 type: integer
                 minimum: 0
@@ -3838,23 +3873,51 @@ components:
           maxItems: 5
           items:
             $ref: '#/components/schemas/DashboardAttentionItem'
+    DashboardPurchaseListOverview:
+      type: object
+      required:
+      - activeLists
+      - itemsRemaining
+      - readyToComplete
+      - recentLists
+      properties:
+        activeLists:
+          type: integer
+          minimum: 0
+        itemsRemaining:
+          type: integer
+          minimum: 0
+          description: 所有 Active Purchase Lists 中 remainingQuantity > 0 的有效 Purchase List Item 行数。
+        readyToComplete:
+          type: integer
+          minimum: 0
+          description: 至少包含一个有效 Item 且 progressStatus=all_received 的 Active Purchase List 数量。
+        recentLists:
+          type: array
+          maxItems: 4
+          description: 最近更新的 Active Purchase Lists，按 updatedAt DESC、id DESC 排序。
+          items:
+            $ref: '#/components/schemas/PurchaseListSummary'
     Dashboard:
       type: object
       required:
       - summary
-      - inventoryStatus
+      - inventoryItemsByCategory
       - topUsedProducts
       - attentionItems
+      - purchaseListOverview
       - asOf
       properties:
         summary:
           $ref: '#/components/schemas/DashboardSummary'
-        inventoryStatus:
-          $ref: '#/components/schemas/InventoryStatusBreakdown'
+        inventoryItemsByCategory:
+          $ref: '#/components/schemas/InventoryCategoryBreakdown'
         topUsedProducts:
           $ref: '#/components/schemas/DashboardTopUsedProducts'
         attentionItems:
           $ref: '#/components/schemas/DashboardAttentionItems'
+        purchaseListOverview:
+          $ref: '#/components/schemas/DashboardPurchaseListOverview'
         asOf:
           type: string
           format: date-time
@@ -3864,18 +3927,21 @@ components:
           lowStockItems: 8
           outOfStockItems: 3
           expiringSoonItems: 6
-        inventoryStatus:
+        inventoryItemsByCategory:
           totalItems: 120
-          statuses:
-          - status: in_stock
-            count: 109
-            percentage: '90.83'
-          - status: low_stock
-            count: 8
-            percentage: '6.67'
-          - status: out_of_stock
-            count: 3
-            percentage: '2.50'
+          categories:
+          - category:
+              id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+              name: Disposables
+              slug: disposables
+            count: 42
+            percentage: '35.00'
+          - category:
+              id: 0dd6feea-e03e-493f-9408-7a3e5b947c77
+              name: Restorative
+              slug: restorative
+            count: 28
+            percentage: '23.33'
         topUsedProducts:
           period: 30d
           items:
@@ -3906,6 +3972,11 @@ components:
             daysUntilExpiry: null
           lowStock: []
           expiringSoon: []
+        purchaseListOverview:
+          activeLists: 4
+          itemsRemaining: 11
+          readyToComplete: 1
+          recentLists: []
         asOf: '2026-08-12T15:30:45Z'
     CategoryUsageTrend:
       type: object
@@ -3989,6 +4060,133 @@ components:
             quantityUsed: '45.00'
           - month: 2026-08
             quantityUsed: '18.00'
+        asOf: '2026-08-12T15:30:45Z'
+    AnalyticsConsumptionTrend:
+      type: object
+      required:
+      - period
+      - fromDate
+      - toDate
+      - timezone
+      - granularity
+      - forecastHorizonMonths
+      - series
+      - asOf
+      properties:
+        period:
+          type: string
+          enum:
+          - last_6_months
+          - last_12_months
+          - last_24_months
+        fromDate:
+          type: string
+          format: date
+        toDate:
+          type: string
+          format: date
+        timezone:
+          type: string
+          examples:
+          - America/Toronto
+        granularity:
+          type: string
+          const: month
+        forecastHorizonMonths:
+          type: integer
+          const: 2
+        series:
+          type: array
+          items:
+            type: object
+            required:
+            - category
+            - actualPoints
+            - forecastPoints
+            - forecastDataSufficiency
+            properties:
+              category:
+                $ref: '#/components/schemas/CategoryReference'
+              actualPoints:
+                type: array
+                description: 所选历史范围内的完整自然月序列；无用量月份补 0。
+                items:
+                  type: object
+                  required:
+                  - month
+                  - quantityUsed
+                  properties:
+                    month:
+                      type: string
+                      pattern: ^\d{4}-(0[1-9]|1[0-2])$
+                    quantityUsed: *id013
+              forecastPoints:
+                type: array
+                maxItems: 2
+                description: 未来两个自然月的预测；数据不足时为空数组。前端以无圆点虚线绘制。
+                items:
+                  type: object
+                  required:
+                  - month
+                  - predictedQuantityUsed
+                  properties:
+                    month:
+                      type: string
+                      pattern: ^\d{4}-(0[1-9]|1[0-2])$
+                    predictedQuantityUsed: *id013
+              forecastDataSufficiency:
+                type: object
+                required:
+                - status
+                - completeWeeks
+                - reason
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - sufficient
+                    - insufficient
+                  completeWeeks:
+                    type: integer
+                    minimum: 0
+                    maximum: 12
+                  reason:
+                    type:
+                    - string
+                    - 'null'
+                    enum:
+                    - fewer_than_4_complete_weeks
+                    - no_valid_consumption
+                    - null
+        asOf:
+          type: string
+          format: date-time
+      example:
+        period: last_6_months
+        fromDate: '2026-03-01'
+        toDate: '2026-08-12'
+        timezone: America/Toronto
+        granularity: month
+        forecastHorizonMonths: 2
+        series:
+        - category:
+            id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+            name: Disposables
+            slug: disposables
+          actualPoints:
+          - month: 2026-07
+            quantityUsed: '45.00'
+          - month: 2026-08
+            quantityUsed: '18.00'
+          forecastPoints:
+          - month: 2026-09
+            predictedQuantityUsed: '47.00'
+          - month: 2026-10
+            predictedQuantityUsed: '49.00'
+          forecastDataSufficiency:
+            status: sufficient
+            completeWeeks: 12
+            reason: null
         asOf: '2026-08-12T15:30:45Z'
     TimeSeries:
       type: object
@@ -4078,6 +4276,22 @@ components:
                 $ref: '#/components/schemas/CategoryReference'
               quantityUsed: *id013
               percentage: *id013
+    ForecastPurchaseListReference:
+      type: object
+      required:
+      - id
+      - name
+      - receiptStatus
+      properties:
+        id: *id001
+        name:
+          type: string
+        receiptStatus:
+          type: string
+          enum:
+          - pending
+          - partially_received
+          - received
     ForecastItem:
       type: object
       required:
@@ -4086,6 +4300,7 @@ components:
       - category
       - currentStock
       - unitName
+      - activePurchaseLists
       - dataSufficiency
       properties:
         inventoryItemId: *id001
@@ -4114,6 +4329,11 @@ components:
           - string
           - 'null'
           format: date
+        activePurchaseLists:
+          type: array
+          description: 该 Inventory Item 所在的全部 Active Purchase Lists；不在任何 Active List 时返回空数组。
+          items:
+            $ref: '#/components/schemas/ForecastPurchaseListReference'
         dataSufficiency:
           type: object
           required:
@@ -4136,90 +4356,80 @@ components:
               - 'null'
     ForecastItemList:
       type: object
+      description: 后端固定按 orderByDate ASC NULLS LAST、predictedRunoutDate ASC NULLS LAST、productName ASC、inventoryItemId ASC
+        排序。MVP 最多返回前 100 条；前端每页展示 5 条。
       required:
       - items
       - totalItems
+      - maxItems
+      - truncated
       properties:
         items:
           type: array
-          maxItems: 10
+          maxItems: 100
+          description: 按固定顺序一次返回，前端每页展示 5 条并自行分页与日期定位。
           items:
             $ref: '#/components/schemas/ForecastItem'
         totalItems:
           type: integer
           minimum: 0
-    ReorderPriorityItem:
-      type: object
-      required:
-      - inventoryItemId
-      - productName
-      - category
-      - priority
-      - orderByDate
-      properties:
-        inventoryItemId: *id001
-        productName:
-          type: string
-        category:
-          $ref: '#/components/schemas/CategoryReference'
-        priority:
-          type: string
-          enum:
-          - high
-          - medium
-          - reorder_soon
-          - planned
-        orderByDate:
-          type:
-          - string
-          - 'null'
-          format: date
-    ReorderPriorityList:
-      type: object
-      required:
-      - items
-      - totalItems
-      properties:
-        items:
-          type: array
-          maxItems: 8
-          items:
-            $ref: '#/components/schemas/ReorderPriorityItem'
-        totalItems:
+          description: 符合 Forecasted Buying Needs 条件的总数。
+        maxItems:
           type: integer
-          minimum: 0
+          const: 100
+        truncated:
+          type: boolean
+          description: totalItems 大于 maxItems 时为 true；Calendar 仍只基于本次实际返回的 items 生成。
     RecommendedOrderTiming:
       type: object
       required:
-      - month
-      - days
+      - fromMonth
+      - toMonth
+      - months
       properties:
-        month:
+        fromMonth:
           type: string
           pattern: ^\d{4}-(0[1-9]|1[0-2])$
-        days:
+        toMonth:
+          type: string
+          pattern: ^\d{4}-(0[1-9]|1[0-2])$
+        months:
           type: array
-          description: 只返回至少有一个建议下单商品的日期；同日多个商品时返回最高优先级和商品数量。
+          minItems: 4
+          maxItems: 4
+          description: 固定包含 Analysis Month 及之后 3 个自然月；没有建议下单日期的月份仍返回 days=[]。
           items:
             type: object
             required:
-            - date
-            - highestPriority
-            - itemCount
+            - month
+            - days
             properties:
-              date:
+              month:
                 type: string
-                format: date
-              highestPriority:
-                type: string
-                enum:
-                - high
-                - medium
-                - reorder_soon
-                - planned
-              itemCount:
-                type: integer
-                minimum: 1
+                pattern: ^\d{4}-(0[1-9]|1[0-2])$
+              days:
+                type: array
+                description: 只返回本次 forecastedBuyingNeeds.items 中至少有一个 Item 的 Order By 日期；itemCount 也只统计本次实际返回的 Items。
+                items:
+                  type: object
+                  required:
+                  - date
+                  - highestPriority
+                  - itemCount
+                  properties:
+                    date:
+                      type: string
+                      format: date
+                    highestPriority:
+                      type: string
+                      enum:
+                      - high
+                      - medium
+                      - reorder_soon
+                      - planned
+                    itemCount:
+                      type: integer
+                      minimum: 1
     Analytics:
       type: object
       required:
@@ -4231,7 +4441,6 @@ components:
       - usageBreakdown
       - forecastedBuyingNeeds
       - recommendedOrderTiming
-      - upcomingReorderPriorities
       - asOf
       properties:
         analysisMonth:
@@ -4255,8 +4464,6 @@ components:
           $ref: '#/components/schemas/ForecastItemList'
         recommendedOrderTiming:
           $ref: '#/components/schemas/RecommendedOrderTiming'
-        upcomingReorderPriorities:
-          $ref: '#/components/schemas/ReorderPriorityList'
         asOf:
           type: string
           format: date-time
@@ -4293,28 +4500,52 @@ components:
             predictedRunoutDate: '2026-09-03'
             recommendedQuantity: '13.00'
             orderByDate: '2026-08-20'
+            activePurchaseLists:
+            - id: 45c2cd56-3ee2-48b4-986a-51792970a67e
+              name: August Restock
+              receiptStatus: partially_received
             dataSufficiency:
               status: sufficient
               completeWeeks: 12
               reason: null
-          totalItems: 1
-        recommendedOrderTiming:
-          month: 2026-08
-          days:
-          - date: '2026-08-15'
-            highestPriority: reorder_soon
-            itemCount: 2
-        upcomingReorderPriorities:
-          items:
-          - inventoryItemId: 8e41d6c8-b0ce-49de-aa8a-eef2f0da7322
-            productName: Nitrile Exam Gloves
+          - inventoryItemId: f4273f5f-4044-4f37-9d4c-b6d13b1c86d3
+            productName: Universal Composite A2
             category:
-              id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
-              name: Disposables
-              slug: disposables
-            priority: reorder_soon
-            orderByDate: '2026-08-15'
-          totalItems: 1
+              id: 0dd6feea-e03e-493f-9408-7a3e5b947c77
+              name: Restorative
+              slug: restorative
+            currentStock: '12.00'
+            unitName: Syringe
+            averageWeeklyUse: '1.25'
+            predictedRunoutDate: '2026-09-22'
+            recommendedQuantity: '8.00'
+            orderByDate: '2026-09-08'
+            activePurchaseLists: []
+            dataSufficiency:
+              status: sufficient
+              completeWeeks: 10
+              reason: null
+          totalItems: 2
+          maxItems: 100
+          truncated: false
+        recommendedOrderTiming:
+          fromMonth: 2026-08
+          toMonth: 2026-11
+          months:
+          - month: 2026-08
+            days:
+            - date: '2026-08-20'
+              highestPriority: reorder_soon
+              itemCount: 1
+          - month: 2026-09
+            days:
+            - date: '2026-09-08'
+              highestPriority: planned
+              itemCount: 1
+          - month: 2026-10
+            days: []
+          - month: 2026-11
+            days: []
         asOf: '2026-08-12T15:30:45Z'
     Notification:
       type: object
@@ -4535,15 +4766,21 @@ components:
           enum:
           - active
           - revoked
-    InventoryImport:
+    InventoryImportSummary:
       type: object
       required:
       - id
+      - fileName
+      - uploadedBy
       - status
       - createdAt
       - updatedAt
       properties:
         id: *id001
+        fileName:
+          type: string
+        uploadedBy:
+          $ref: '#/components/schemas/EntityReference'
         status:
           type: string
           enum:
@@ -4552,16 +4789,6 @@ components:
           - review_required
           - confirmed
           - failed
-        rawExtraction:
-          type:
-          - object
-          - 'null'
-          additionalProperties: true
-        reviewDraft:
-          type:
-          - object
-          - 'null'
-          additionalProperties: true
         confirmedAt:
           type:
           - string
@@ -4573,6 +4800,33 @@ components:
         updatedAt:
           type: string
           format: date-time
+    InventoryImport:
+      allOf:
+      - $ref: '#/components/schemas/InventoryImportSummary'
+      - type: object
+        properties:
+          rawExtraction:
+            type:
+            - object
+            - 'null'
+            additionalProperties: true
+          reviewDraft:
+            type:
+            - object
+            - 'null'
+            additionalProperties: true
+    InventoryImportPage:
+      type: object
+      required:
+      - items
+      - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryImportSummary'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
     InventoryImportConfirmRequest:
       type: object
       required:
