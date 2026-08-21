@@ -14,6 +14,13 @@ tags:
     Endpoint，密码不传给 FastAPI。两端使用相同 Auth 方法；React Native 需另外配置 AsyncStorage、AppState Token Refresh 和 Deep Linking。
 
 
+    - **Sign up:** `signUp({ email, password })` → Supabase 创建未验证用户并发送验证邮件；此时 HexaDent API 不创建业务数据。
+
+    - **Verify email:** `verifyOtp({ token_hash, type: ''email'' })` → Session → 填写诊所资料并调用 `POST /onboarding`。
+
+    - **Resend verification:** `resend({ type: ''signup'', email })` → Supabase 重新发送验证邮件。
+
+
     - **Login:** `signInWithPassword({ email, password })` → Session → 携带 Access Token 调用 `GET /me`。
 
     - **Forgot password:** `resetPasswordForEmail(email)` → 发送 Recovery Email，页面统一显示“如果账号存在，将收到重置邮件”。
@@ -37,102 +44,19 @@ tags:
 - name: Analytics
 - name: Notifications
 paths:
-  /auth/registrations:
+  /onboarding:
     post:
       tags:
-      - Auth
-      operationId: createRegistration
-      summary: 创建完整 Pending Onboarding
-      responses:
-        '409':
-          description: 资源状态、版本、重复数据或幂等请求冲突
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '422':
-          description: 字段未通过业务校验
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '429':
-          description: 请求频率超过限制
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '503':
-          description: 依赖服务暂不可用
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '201':
-          description: 注册创建成功，等待邮箱验证
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RegistrationResult'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RegistrationRequest'
-      security: []
-  /auth/registrations/resend-verification:
-    post:
-      tags:
-      - Auth
-      operationId: resendRegistrationVerification
-      summary: 重新发送验证邮件
-      responses:
-        '422':
-          description: 字段未通过业务校验
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '429':
-          description: 请求频率超过限制
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '503':
-          description: 依赖服务暂不可用
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '202':
-          description: 请求已接受
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ResendVerificationResult'
-      description: 为避免泄露账户是否存在或是否已验证，符合格式的请求统一返回 202。202 表示请求已接受，不保证邮件已经送达。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/EmailRequest'
-      security: []
-  /auth/registrations/activation:
-    post:
-      tags:
-      - Auth
-      operationId: activateRegistration
-      summary: 激活 Membership 与 Organization
+      - Account
+      operationId: completeOnboarding
+      summary: 为已验证用户创建诊所 Workspace
       responses:
         '200':
-          description: 激活完成或已处于 Active
+          description: Workspace 创建完成，或当前用户已经完成 Onboarding
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ActivationResult'
+                $ref: '#/components/schemas/OnboardingResult'
         '401':
           description: Access Token 缺失、无效或已过期
           content:
@@ -140,27 +64,39 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
+          description: Supabase 用户尚未验证邮箱，或账户状态不允许创建 Workspace
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '409':
-          description: 资源状态、版本、重复数据或幂等请求冲突
+          description: 当前账户上下文冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 字段未通过业务校验
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '503':
-          description: 依赖服务暂不可用
+          description: Supabase Auth 或数据库暂不可用
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: '本接口没有 Path、Query 或 Request Body 参数。验证邮件不会携带注册时的 Authorization Header。邮件中的自定义链接应携带一次性 token_hash 和 type=email
-        并打开前端确认页。前端调用 Supabase verifyOtp({ token_hash, type: ''email'' }) 完成验证；Supabase 随后在当前浏览器签发新 Session，所以此流程不依赖原浏览器保存的
-        Session，也可在无痕窗口或其他设备完成。前端再在 Authorization Header 中携带新 Session 的 Access Token 调用本接口。后端从 Token 的 `sub` 识别 User，确认 Email
-        已验证，再幂等激活其 Pending Membership 和 Organization。客户端不得提交 userId、email 或 organizationId。'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingRequest'
+      description: '客户端必须先通过 Supabase signUp 和 verifyOtp 完成邮箱验证。调用本接口时携带 Supabase Access Token；后端从 Token
+        识别 User，再通过 Supabase Auth 确认邮箱已验证。接口幂等创建 User Profile、Active Organization 和 founding Active Admin Membership。
+        客户端必须明确接受当前 Terms of Service 与 Privacy Policy；服务端用当前配置的文档版本和服务端时间写入不可覆盖的 Consent 记录。
+        客户端不得提交 userId、登录邮箱、密码、文档版本、角色或状态。尚未完成 Onboarding 的已验证用户再次登录时，客户端应返回 Workspace Setup 页面。'
   /me:
     get:
       tags:
@@ -181,7 +117,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
+          description: 返回 `ONBOARDING_REQUIRED` 时客户端进入 Workspace Setup；其他情况表示 Membership 或 Organization 不允许访问
           content:
             application/json:
               schema:
@@ -3140,15 +3076,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/EntityReference'
-    RegistrationRequest:
+    OnboardingRequest:
       type: object
       required:
       - clinicName
       - clinicContactEmail
       - firstName
       - lastName
-      - workEmail
-      - password
       - termsAccepted
       - privacyAccepted
       properties:
@@ -3175,44 +3109,27 @@ components:
           type: string
           minLength: 1
           maxLength: 80
-        workEmail:
-          type: string
-          format: email
-        password:
-          type: string
-          format: password
-          minLength: 8
-          maxLength: 64
-          writeOnly: true
         termsAccepted:
           const: true
+          description: 明确接受当前 Terms of Service。版本号由服务端决定并持久化。
         privacyAccepted:
           const: true
-    RegistrationResult:
+          description: 明确接受当前 Privacy Policy。版本号由服务端决定并持久化。
+      description: 仅在 Supabase 邮箱验证成功后提交。用户身份与登录邮箱来自 Access Token，不接受密码或客户端指定的 userId、文档版本、角色及状态。
+    OnboardingResult:
       type: object
       required:
       - status
       - nextAction
-      - message
-      - verificationEmailSent
       properties:
         status:
-          const: pending_verification
+          const: completed
         nextAction:
-          const: verify_email
-          description: 客户端应进入等待邮箱验证的页面。
-        message:
-          type: string
-          description: 可直接展示的默认英文提示文案。
-          example: Your account has been created. Please check your email and verify your account before signing in.
-        verificationEmailSent:
-          const: true
-          description: 本次注册响应成功前，验证邮件已经交给邮件服务发送。
+          const: enter_workspace
+          description: 客户端应刷新 `GET /me` 并进入 Workspace。
       example:
-        status: pending_verification
-        nextAction: verify_email
-        message: Your account has been created. Please check your email and verify your account before signing in.
-        verificationEmailSent: true
+        status: completed
+        nextAction: enter_workspace
     EmailRequest:
       type: object
       required:
@@ -3228,31 +3145,6 @@ components:
       properties:
         message:
           type: string
-    ResendVerificationResult:
-      type: object
-      required:
-      - status
-      - message
-      properties:
-        status:
-          const: accepted
-          description: 请求已被接受，不表示 Email 一定存在或邮件已经送达。
-        message:
-          type: string
-          description: 不泄露账户状态、可直接展示的默认英文文案。
-      example:
-        status: accepted
-        message: If this email belongs to an account awaiting verification, a new verification email will be sent.
-    ActivationResult:
-      type: object
-      required:
-      - membershipStatus
-      - organizationStatus
-      properties:
-        membershipStatus:
-          const: active
-        organizationStatus:
-          const: active
     MeResponse:
       type: object
       required:
