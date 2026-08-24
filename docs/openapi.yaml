@@ -220,6 +220,32 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/OrganizationUpdateRequest'
+  /reference-data/localization-options:
+    get:
+      tags:
+      - Lookups
+      operationId: getLocalizationOptions
+      summary: 获取本地化设置选项
+      description: 返回 MVP 当前支持的 Country、Currency 与 IANA Timezone 选项，供 Settings 等客户端下拉框使用。返回的是产品支持范围，不保证包含 ISO 或 IANA 的全部条目；客户端提交 Organization 设置时仍须使用这里返回的稳定代码或 ID。
+      responses:
+        '200':
+          description: 本地化设置选项
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocalizationOptions'
+        '401':
+          description: Access Token 缺失、无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership 或 Organization 状态不允许访问
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /brands:
     get:
       tags:
@@ -3296,11 +3322,8 @@ components:
           - closed
     OrganizationUpdateRequest:
       type: object
-      required:
-      - name
-      - countryCode
-      - timezone
-      - currencyCode
+      minProperties: 1
+      description: 仅更新请求中实际提交的字段，支持 Clinic Information 与 Regional Settings 分别保存。地址类字段可显式传 null 清空；name、countryCode、timezone 和 currencyCode 不接受 null。未知字段会被忽略，但请求必须至少包含一个可更新字段。
       properties:
         name:
           type: string
@@ -3349,6 +3372,72 @@ components:
           $ref: '#/components/schemas/Organization'
         currencyChanged:
           type: boolean
+    LocalizationOptions:
+      type: object
+      required:
+      - countries
+      - currencies
+      - timezones
+      properties:
+        countries:
+          type: array
+          items:
+            $ref: '#/components/schemas/CountryOption'
+        currencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/CurrencyOption'
+        timezones:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimezoneOption'
+    CountryOption:
+      type: object
+      required:
+      - code
+      - name
+      properties:
+        code:
+          type: string
+          pattern: ^[A-Z]{2}$
+          description: ISO 3166-1 alpha-2 code。
+          examples:
+          - CA
+        name:
+          type: string
+          examples:
+          - Canada
+    CurrencyOption:
+      type: object
+      required:
+      - code
+      - name
+      properties:
+        code:
+          type: string
+          pattern: ^[A-Z]{3}$
+          description: ISO 4217 alphabetic code。
+          examples:
+          - CAD
+        name:
+          type: string
+          examples:
+          - Canadian Dollar
+    TimezoneOption:
+      type: object
+      required:
+      - id
+      - label
+      properties:
+        id:
+          type: string
+          description: IANA Timezone ID。
+          examples:
+          - America/Toronto
+        label:
+          type: string
+          examples:
+          - Toronto (Eastern Time)
     LookupCreateRequest:
       type: object
       required:
