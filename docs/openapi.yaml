@@ -226,7 +226,7 @@ paths:
       - Lookups
       operationId: getRegionalOptions
       summary: 获取区域设置选项
-      description: 返回 MVP 当前支持的 Country、Currency 与 IANA Timezone 选项，供 Settings 等客户端下拉框使用。返回的是加拿大和美国范围内的产品支持值，不包含 ISO 或 IANA 的全部条目；客户端提交 Organization 设置时必须使用这里返回的稳定代码或 ID。
+      description: 返回 MVP 当前支持的 Country、Currency 与 IANA Timezone 选项，供 Settings 等客户端下拉框使用。Timezone 的 label 已包含 IANA ID，可由客户端直接展示。返回的是加拿大和美国范围内的产品支持值，不包含 ISO 或 IANA 的全部条目；客户端提交 Organization 设置时必须使用这里返回的稳定代码或 ID。
       responses:
         '200':
           description: 区域设置选项
@@ -3485,8 +3485,9 @@ components:
           - America/Toronto
         label:
           type: string
+          description: 包含 IANA Timezone ID、可由客户端直接展示的标签。
           examples:
-          - Toronto (Eastern Time)
+          - America/Toronto (Eastern Time)
     LookupCreateRequest:
       type: object
       required:
