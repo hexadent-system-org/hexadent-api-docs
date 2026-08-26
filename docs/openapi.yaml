@@ -3146,16 +3146,12 @@ components:
       type: object
       required:
       - status
-      - nextAction
       properties:
         status:
           const: completed
-        nextAction:
-          const: enter_workspace
-          description: 客户端应刷新 `GET /me` 并进入 Workspace。
+          description: 客户端收到完成状态后应刷新 `GET /me`，再进入 Workspace。
       example:
         status: completed
-        nextAction: enter_workspace
     EmailRequest:
       type: object
       required:
