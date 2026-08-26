@@ -34,12 +34,24 @@ API 负责提供面向用户的英文错误提示。客户端不得解析 `messa
 
 | 公开 Error Code | HTTP 状态 | 用户提示 | 前端必须执行的行为 |
 | --- | ---: | --- | --- |
-| `UNAUTHORIZED` | 401 | Your session has expired. Please sign in again. | 尝试刷新 Session 一次。如果刷新失败，清除 Session 并进入登录页。不得循环重试。 |
+| `UNAUTHORIZED` | 401 | Please sign in to continue. | 尝试刷新 Session 一次。如果刷新失败，清除 Session 并进入登录页。不得循环重试。 |
 | `EMAIL_NOT_VERIFIED` | 403 | Please verify your email address to continue. | 进入邮箱验证页面，并提供重新发送验证邮件的操作。 |
-| `ONBOARDING_REQUIRED` | 403 | Let’s finish setting up your workspace. | 直接进入 Workspace Setup，通常不需要显示错误 Toast。 |
+| `ONBOARDING_REQUIRED` | 403 | Let's finish setting up your workspace. | 直接进入 Workspace Setup，通常不需要显示错误 Toast。 |
 | `ACCESS_RESTRICTED` | 403 | Your access to this organization is currently restricted. Contact your organization administrator or support for help. | 显示 Access Restricted 页面，不得自动重试。 |
 | `ACCOUNT_SELECTION_REQUIRED` | 409 | Choose an organization to continue. | 打开 Organization Selector。 |
 | `REQUEST_VALIDATION_ERROR` | 422 | Please check the highlighted fields and try again. | 将 `fieldErrors` 映射到对应表单控件；无法映射的错误显示在表单级错误区域。 |
+
+## 其他公开 Error Code
+
+以下 Code 不需要特殊导航。客户端显示 API 返回的 `message`，并执行对应的通用行为。
+
+| 公开 Error Code | HTTP 状态 | 用户提示 | 前端行为 |
+| --- | ---: | --- | --- |
+| `FORBIDDEN` | 403 | API 根据操作返回对应的权限提示。 | 保持当前页面，显示 `message`，不得自动重试。 |
+| `CONFLICT` | 409 | We couldn't complete your request because your account needs attention. Please contact support for help. | 显示 `message`，不得自动重试；联系支持时携带 `requestId`。 |
+| `RATE_LIMITED` | 429 | Too many attempts. Please wait a moment and try again. | 显示 `message`；存在 `Retry-After` 时，在指定时间后才允许重试。 |
+| `SERVICE_UNAVAILABLE` | 503 | We couldn't complete your request. Please try again. | 保留用户输入并允许手动重试，不得退出登录。 |
+| `INTERNAL_SERVER_ERROR` | 500 | Something went wrong. Please try again. | 显示 `message` 并允许手动重试。 |
 
 ## 其他错误的默认行为
 
