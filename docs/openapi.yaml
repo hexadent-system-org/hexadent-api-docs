@@ -220,20 +220,20 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/OrganizationUpdateRequest'
-  /reference-data/localization-options:
+  /reference-data/regional-options:
     get:
       tags:
       - Lookups
-      operationId: getLocalizationOptions
-      summary: 获取本地化设置选项
-      description: 返回 MVP 当前支持的 Country、Currency 与 IANA Timezone 选项，供 Settings 等客户端下拉框使用。返回的是产品支持范围，不保证包含 ISO 或 IANA 的全部条目；客户端提交 Organization 设置时仍须使用这里返回的稳定代码或 ID。
+      operationId: getRegionalOptions
+      summary: 获取区域设置选项
+      description: 返回 MVP 当前支持的 Country、Currency 与 IANA Timezone 选项，供 Settings 等客户端下拉框使用。返回的是加拿大和美国范围内的产品支持值，不包含 ISO 或 IANA 的全部条目；客户端提交 Organization 设置时必须使用这里返回的稳定代码或 ID。
       responses:
         '200':
-          description: 本地化设置选项
+          description: 区域设置选项
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LocalizationOptions'
+                $ref: '#/components/schemas/RegionalOptions'
         '401':
           description: Access Token 缺失、无效或已过期
           content:
@@ -242,6 +242,18 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '403':
           description: 当前 Membership 或 Organization 状态不允许访问
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 当前用户存在多个 Organization Membership，需要先选择 Organization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 数据库或服务暂时不可用
           content:
             application/json:
               schema:
@@ -3352,15 +3364,34 @@ components:
           maxLength: 32
         countryCode:
           type: string
-          pattern: ^[A-Z]{2}$
-          description: 有效的 ISO 3166-1 alpha-2 国家代码。
+          enum:
+          - CA
+          - US
+          description: Regional Options API 返回的受支持国家代码。
         timezone:
           type: string
-          description: 有效的 IANA Timezone ID。
+          enum:
+          - America/St_Johns
+          - America/Halifax
+          - America/Toronto
+          - America/Winnipeg
+          - America/Regina
+          - America/Edmonton
+          - America/Vancouver
+          - America/New_York
+          - America/Chicago
+          - America/Denver
+          - America/Phoenix
+          - America/Los_Angeles
+          - America/Anchorage
+          - Pacific/Honolulu
+          description: Regional Options API 返回的受支持 IANA Timezone ID。
         currencyCode:
           type: string
-          pattern: ^[A-Z]{3}$
-          description: 有效的 ISO 4217 alphabetic currency code。
+          enum:
+          - CAD
+          - USD
+          description: Regional Options API 返回的受支持货币代码。
     OrganizationUpdateResult:
       type: object
       required:
@@ -3371,7 +3402,7 @@ components:
           $ref: '#/components/schemas/Organization'
         currencyChanged:
           type: boolean
-    LocalizationOptions:
+    RegionalOptions:
       type: object
       required:
       - countries
@@ -3398,7 +3429,9 @@ components:
       properties:
         code:
           type: string
-          pattern: ^[A-Z]{2}$
+          enum:
+          - CA
+          - US
           description: ISO 3166-1 alpha-2 code。
           examples:
           - CA
@@ -3414,7 +3447,9 @@ components:
       properties:
         code:
           type: string
-          pattern: ^[A-Z]{3}$
+          enum:
+          - CAD
+          - USD
           description: ISO 4217 alphabetic code。
           examples:
           - CAD
@@ -3430,7 +3465,22 @@ components:
       properties:
         id:
           type: string
-          description: IANA Timezone ID。
+          enum:
+          - America/St_Johns
+          - America/Halifax
+          - America/Toronto
+          - America/Winnipeg
+          - America/Regina
+          - America/Edmonton
+          - America/Vancouver
+          - America/New_York
+          - America/Chicago
+          - America/Denver
+          - America/Phoenix
+          - America/Los_Angeles
+          - America/Anchorage
+          - Pacific/Honolulu
+          description: HexaDent 当前支持的 IANA Timezone ID。
           examples:
           - America/Toronto
         label:
