@@ -2634,9 +2634,9 @@ components:
           sourceType:
             type: string
             enum:
-            - imported
-            - manual
-            - admin_created
+            - external_catalog_import
+            - organization_manual_entry
+            - platform_curated
           source: *id013
           sourceProductCode: *id013
           status:
