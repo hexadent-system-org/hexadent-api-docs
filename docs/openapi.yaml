@@ -484,21 +484,34 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 当前用户存在多个 Organization Membership，需要先选择 Organization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '422':
           description: 字段未通过业务校验
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: '`keyword`、`brandId` 和 `categoryId` 均可选，可组合筛选；不传某个参数时不应用该维度的过滤。'
+        '503':
+          description: 数据库或服务暂时不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      description: '`keyword`、`brandId` 和 `categoryId` 均可选，可组合筛选；不传某个参数时不应用该维度的过滤。Product 名称和 Brand 名称经过 Unicode NFKC、连续空白折叠及大小写归一化后进行包含匹配；MFG Number 和 Barcode 额外忽略空白及 `-`、`_`、`/`、`.`、`:` 分隔符。'
       parameters:
       - &id002
         name: keyword
         in: query
         required: false
-        description: 去除首尾空格后进行大小写不敏感搜索
+        description: 大小写不敏感的关键词搜索；服务端负责输入标准化，具体匹配字段和规则见各端点描述。
         schema:
           type: string
+          maxLength: 300
       - name: brandId
         in: query
         required: false
