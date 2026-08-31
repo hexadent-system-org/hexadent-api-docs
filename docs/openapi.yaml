@@ -2676,7 +2676,7 @@ components:
           - string
           - 'null'
           format: uri
-          description: 带有效期的临时图片读取地址。
+          description: Product 图片的临时签名访问地址；没有图片或签名失败时为 null。
         inventoryItem:
           anyOf:
           - $ref: '#/components/schemas/InventoryItemReference'
@@ -2871,6 +2871,7 @@ components:
       - lowStockThreshold
       - inventoryStatus
       - expiryStatus
+      - imageUrl
       - version
       - createdAt
       - updatedAt
@@ -2907,6 +2908,12 @@ components:
           - expiring_soon
           - expired
         location: *id013
+        imageUrl:
+          type:
+          - string
+          - 'null'
+          format: uri
+          description: Product 图片的临时签名访问地址；没有图片或签名失败时为 null。
         version:
           type: integer
           minimum: 1
