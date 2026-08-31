@@ -550,7 +550,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: '`keyword`、`brandId` 和 `categoryId` 均可选，可组合筛选；不传某个参数时不应用该维度的过滤。Product 名称和 Brand 名称经过 Unicode NFKC、连续空白折叠及大小写归一化后进行包含匹配；MFG Number 和 Barcode 额外忽略空白及 `-`、`_`、`/`、`.`、`:` 分隔符。'
+      description: '`keyword`、`brandId` 和 `categoryId` 均可选，可组合筛选；不传某个参数时不应用该维度的过滤。`keyword` 对 Product 名称执行包含匹配：先进行 Unicode NFKC、连续空白折叠及大小写归一化。相同输入也会按 MFG Number 规则规范化（忽略空白及 `-`、`_`、`/`、`.`、`:` 分隔符）后执行精确匹配。Brand 仅通过 `brandId` 筛选，Barcode 不参与 Product Library keyword 搜索。'
       parameters:
       - &id002
         name: keyword
