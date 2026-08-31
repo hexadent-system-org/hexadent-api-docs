@@ -294,8 +294,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 当前用户存在多个 Organization Membership，需要先选择 Organization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '422':
           description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 数据库或服务暂时不可用
           content:
             application/json:
               schema:
@@ -345,12 +357,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 数据库或服务暂时不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LookupCreateRequest'
+              $ref: '#/components/schemas/BrandCreateRequest'
   /units:
     get:
       tags:
@@ -376,8 +394,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 当前用户存在多个 Organization Membership，需要先选择 Organization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '422':
           description: 字段未通过业务校验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 数据库或服务暂时不可用
           content:
             application/json:
               schema:
@@ -427,12 +457,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 数据库或服务暂时不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LookupCreateRequest'
+              $ref: '#/components/schemas/UnitCreateRequest'
   /categories:
     get:
       tags:
@@ -454,6 +490,18 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '403':
           description: 当前 Membership、Organization 状态或角色不允许操作
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 当前用户存在多个 Organization Membership，需要先选择 Organization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 数据库或服务暂时不可用
           content:
             application/json:
               schema:
@@ -3501,7 +3549,7 @@ components:
           description: 包含 IANA Timezone ID、可由客户端直接展示的标签。
           examples:
           - America/Toronto (Eastern Time)
-    LookupCreateRequest:
+    BrandCreateRequest:
       type: object
       required:
       - name
@@ -3510,6 +3558,15 @@ components:
           type: string
           minLength: 1
           maxLength: 160
+    UnitCreateRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
     EntityReferenceList:
       type: object
       required:
