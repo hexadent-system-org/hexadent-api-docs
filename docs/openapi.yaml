@@ -2646,6 +2646,8 @@ components:
       - brand
       - category
       - unit
+      - containedQuantity
+      - containedUnit
       - inventoryItem
       properties:
         id: *id001
@@ -2659,7 +2661,10 @@ components:
         name:
           type: string
         brand:
-          $ref: '#/components/schemas/EntityReference'
+          anyOf:
+          - $ref: '#/components/schemas/EntityReference'
+          - type: 'null'
+          description: Product 没有已知 Brand 时为 null。
         category:
           $ref: '#/components/schemas/CategoryReference'
         manufacturer: &id013
@@ -2671,6 +2676,19 @@ components:
         specification: *id013
         unit:
           $ref: '#/components/schemas/EntityReference'
+        containedQuantity:
+          type:
+          - string
+          - 'null'
+          pattern: ^[1-9]\d*(\.\d{1,4})?$|^0\.\d{1,4}$
+          description: 一个 Purchase Unit 内包含的数量；与 containedUnit 同时为值或同时为 null。
+          examples:
+          - '20.0000'
+        containedUnit:
+          anyOf:
+          - $ref: '#/components/schemas/EntityReference'
+          - type: 'null'
+          description: containedQuantity 对应的单位，例如 Capsule；与 containedQuantity 成对出现。
         imageUrl:
           type:
           - string
@@ -2880,7 +2898,10 @@ components:
         product:
           $ref: '#/components/schemas/EntityReference'
         brand:
-          $ref: '#/components/schemas/EntityReference'
+          anyOf:
+          - $ref: '#/components/schemas/EntityReference'
+          - type: 'null'
+          description: Product 没有已知 Brand 时为 null。
         category:
           $ref: '#/components/schemas/CategoryReference'
         mfgNumber: *id013
