@@ -802,8 +802,9 @@ paths:
         Manual Product 并加入库存。
 
 
-        `duplicateAcknowledgements` 用于确认疑似重复商品。首次提交传空数组或省略；若后端返回疑似重复商品，前端向用户展示后，用户选择仍然添加时，将已确认商品的 `productId` 放入数组并重新提交。该字段只能确认软重复提示，不能绕过相同
-        Product 已在有效库存中、Barcode 唯一约束或其他硬冲突。'
+        `duplicateAcknowledgements` 用于确认疑似重复商品。首次提交传空数组或省略；若后端返回疑似重复商品，前端向用户展示后重新提交。`library_product`
+        分支需要确认全部候选；`manual_product` 分支只能提交一个用户选择的候选，后端会重新校验候选仍然匹配且可见，然后复用该 Product。该字段不能绕过相同 Product
+        已在有效库存中、Barcode 唯一约束或其他硬冲突。'
       parameters:
       - &id006
         name: Idempotency-Key
@@ -851,6 +852,8 @@ paths:
                     barcode: null
                     specification: 4 g syringe
                     unitId: 44444444-4444-4444-8444-444444444444
+                    containedQuantity: '20.0000'
+                    containedUnitId: 66666666-6666-4666-8666-666666666666
                   inventory:
                     quantityOnHand: '10.00'
                     lowStockThreshold: '3.00'
@@ -861,6 +864,32 @@ paths:
                     expiryDate: null
                     internalNote: null
                   duplicateAcknowledgements: []
+              manualDuplicateReuse:
+                summary: 3. 用户选择疑似重复候选后，复用现有 Product 并加入库存
+                value:
+                  sourceType: manual_product
+                  product:
+                    name: Custom Composite A2
+                    brandId: 22222222-2222-4222-8222-222222222222
+                    categoryId: 33333333-3333-4333-8333-333333333333
+                    manufacturer: Example Manufacturer
+                    mfgNumber: ABC-001
+                    barcode: null
+                    specification: 4 g syringe
+                    unitId: 44444444-4444-4444-8444-444444444444
+                    containedQuantity: '20.0000'
+                    containedUnitId: 66666666-6666-4666-8666-666666666666
+                  inventory:
+                    quantityOnHand: '10.00'
+                    lowStockThreshold: '3.00'
+                    location: Storage A
+                    vendor: null
+                    vendorItemNumber: null
+                    purchasePrice: null
+                    expiryDate: null
+                    internalNote: null
+                  duplicateAcknowledgements:
+                  - productId: 55555555-5555-4555-8555-555555555555
   /inventory/items/{inventoryItemId}:
     get:
       tags:
@@ -2776,6 +2805,23 @@ components:
           - 'null'
           maxLength: 2000
         unitId: *id001
+    ManualProductCreateInput:
+      allOf:
+      - $ref: '#/components/schemas/ManualProductInput'
+      - type: object
+        properties:
+          containedQuantity:
+            type:
+            - string
+            - 'null'
+            pattern: ^(?:0\.\d{1,4}|[1-9]\d*(?:\.\d{1,4})?)$
+            description: 可选；一个 Purchase Unit 内包含的数量。必须大于 0、最多四位小数，并与 containedUnitId 同时提供或同时省略。
+            example: '20.0000'
+          containedUnitId:
+            anyOf:
+            - *id001
+            - type: 'null'
+            description: 可选；containedQuantity 对应的 Unit ID。必须对当前 Organization 可见，并与 containedQuantity 同时提供或同时省略。
     ProductUpdateRequest:
       $ref: '#/components/schemas/ManualProductInput'
       description: 仅 Owner Organization 的 Manual Product 可修改。
@@ -2859,12 +2905,13 @@ components:
         sourceType:
           const: manual_product
         product:
-          $ref: '#/components/schemas/ManualProductInput'
+          $ref: '#/components/schemas/ManualProductCreateInput'
         inventory:
           $ref: '#/components/schemas/InventorySettingsInput'
         duplicateAcknowledgements:
           type: array
-          description: 疑似重复确认列表。首次提交传空数组或省略；用户确认继续后，重试时加入已确认疑似重复商品的 `productId`。若确认多个候选，则分别加入数组。
+          maxItems: 1
+          description: 疑似重复选择。首次提交传空数组或省略；用户选择一个候选后，重试时加入该 Product 的 `productId`。后端重新校验后复用该 Product，不创建新的 Manual Product。
           items:
             $ref: '#/components/schemas/DuplicateAcknowledgement'
           default: []
