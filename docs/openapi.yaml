@@ -3128,6 +3128,7 @@ components:
           - string
           - 'null'
           format: date-time
+          description: 库存事件实际发生时间，必须包含 UTC 偏移，最多可晚于服务器当前时间 5 分钟；省略时使用服务器当前时间。
       allOf:
       - if:
           properties:
