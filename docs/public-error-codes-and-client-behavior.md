@@ -39,6 +39,7 @@ API 负责提供面向用户的英文错误提示。客户端不得解析 `messa
 | `ONBOARDING_REQUIRED` | 403 | Let's finish setting up your workspace. | 直接进入 Workspace Setup，通常不需要显示错误 Toast。 |
 | `ACCESS_RESTRICTED` | 403 | Your access to this organization is currently restricted. Contact your organization administrator or support for help. | 显示 Access Restricted 页面，不得自动重试。 |
 | `ACCOUNT_SELECTION_REQUIRED` | 409 | Choose an organization to continue. | 打开 Organization Selector。 |
+| `INVENTORY_VERSION_CONFLICT` | 409 | Inventory changed since it was last loaded. Refresh and try again. | 重新获取最新 Inventory Item；用户再次确认后才可使用新的 `version` 重试原操作。 |
 | `REQUEST_VALIDATION_ERROR` | 422 | Please check the highlighted fields and try again. | 将 `fieldErrors` 映射到对应表单控件；无法映射的错误显示在表单级错误区域。 |
 
 ## 其他公开 Error Code
@@ -94,6 +95,8 @@ function handleApiError(error: ApiError) {
       return showAccessRestricted(error.message);
     case "ACCOUNT_SELECTION_REQUIRED":
       return navigateToOrganizationSelector();
+    case "INVENTORY_VERSION_CONFLICT":
+      return refreshInventoryItemAndRequestConfirmation(error.details?.currentVersion);
     case "REQUEST_VALIDATION_ERROR":
       return applyFieldErrors(error.fieldErrors);
     default:
