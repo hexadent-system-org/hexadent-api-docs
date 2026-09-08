@@ -1016,6 +1016,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: If-Match 缺失、格式错误或版本超出支持范围
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '204':
           description: 操作成功，无响应体
       parameters:
@@ -1026,6 +1032,8 @@ paths:
         description: '必须与当前 Inventory Item version 匹配，例如 version=7 时传 `If-Match: "7"`。用于防止删除已被其他请求修改的数据。'
         schema:
           type: string
+          pattern: '^"[1-9]\d{0,18}"$'
+          maxLength: 21
           example: '"7"'
   /inventory/items/{inventoryItemId}/quantity-adjustments:
     post:
