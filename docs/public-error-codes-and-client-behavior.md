@@ -15,6 +15,7 @@ API 负责提供面向用户的英文错误提示。客户端不得解析 `messa
     "fieldErrors": [
       {
         "field": "countryCode",
+        "code": "unsupported_value",
         "message": "Select a supported country."
       }
     ],
@@ -40,6 +41,10 @@ API 负责提供面向用户的英文错误提示。客户端不得解析 `messa
 | `ACCESS_RESTRICTED` | 403 | Your access to this organization is currently restricted. Contact your organization administrator or support for help. | 显示 Access Restricted 页面，不得自动重试。 |
 | `ACCOUNT_SELECTION_REQUIRED` | 409 | Choose an organization to continue. | 打开 Organization Selector。 |
 | `INVENTORY_VERSION_CONFLICT` | 409 | Inventory changed since it was last loaded. Refresh and try again. | 重新获取最新 Inventory Item；用户再次确认后才可使用新的 `version` 重试原操作。 |
+| `PURCHASE_DRAFT_VERSION_CONFLICT` | 409 | The purchase draft changed since it was last loaded. Refresh and try again. | 刷新 shared Draft；不得用旧 `expectedVersion` 自动重试 PATCH、DELETE 或 Approval。 |
+| `PURCHASE_LIST_VERSION_CONFLICT` | 409 | The purchase list changed since it was last loaded. Refresh and try again. | 刷新 List detail；用户再次触发操作时使用新的 List/Item/Inventory version。 |
+| `PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED` | 409 | Review the receiving differences before completing this purchase list. | 从 `details.variance` 展示 zero/short/over summary；只有用户明确确认后才以新的 Idempotency-Key 和最新 version 重试。 |
+| `INVENTORY_PURCHASE_LIST_BLOCKED` | 409 | This item is still used by a purchase draft or open purchase list. | 展示 `details.blockers`，提供 Draft/List 入口并禁止移除 Inventory Item。 |
 | `REQUEST_VALIDATION_ERROR` | 422 | Please check the highlighted fields and try again. | 将 `fieldErrors` 映射到对应表单控件；无法映射的错误显示在表单级错误区域。 |
 
 ## 其他公开 Error Code
@@ -49,8 +54,15 @@ API 负责提供面向用户的英文错误提示。客户端不得解析 `messa
 | 公开 Error Code | HTTP 状态 | 用户提示 | 前端行为 |
 | --- | ---: | --- | --- |
 | `FORBIDDEN` | 403 | API 根据操作返回对应的权限提示。 | 保持当前页面，显示 `message`，不得自动重试。 |
+| `RESOURCE_NOT_FOUND` | 404 | We couldn't find that resource. | 保持当前页面并刷新当前 Organization 的列表；跨租户 ID 使用同一 code/message，不提示资源存在。 |
+| `PURCHASE_LIST_STATE_CONFLICT` | 409 | This purchase list can no longer be changed in its current state. | 刷新 List detail 并按最新状态禁用不合法操作；不得自动回退状态。 |
+| `PURCHASE_LIST_RECEIPTS_PREVENT_CANCELLATION` | 409 | This purchase list has receiving history and can't be cancelled. | 保留 List detail 并隐藏/禁用 Cancel；不得尝试删除 receipt history。 |
+| `PURCHASE_CORRECTION_NEGATIVE_INVENTORY` | 409 | This correction would make inventory negative. | 保留输入，展示最新 Inventory quantity 和允许的最小 total；用户修改后使用新 key 重试。 |
+| `IDEMPOTENCY_CONFLICT` | 409 | This request key was already used for different data. Start the action again. | 生成新的 key 前先重新加载资源；不得用同一 key 提交不同 material payload。相同 operation + key + payload 的网络重试必须复用原 key。 |
 | `CONFLICT` | 409 | We couldn't complete your request because your account needs attention. Please contact support for help. | 显示 `message`，不得自动重试；联系支持时携带 `requestId`。 |
+| `EXPORT_ITEM_LIMIT_EXCEEDED` | 413 | This purchase list is too large to export. | 显示 1,000-item 上限，不得自动重试相同导出。 |
 | `RATE_LIMITED` | 429 | Too many attempts. Please wait a moment and try again. | 显示 `message`；存在 `Retry-After` 时，在指定时间后才允许重试。 |
+| `PURCHASE_DEPENDENCY_UNAVAILABLE` | 503 | We couldn't update the purchase list. Please try again. | 保留输入；确认原 Idempotency-Key 后允许手动重试。API 保证 Inventory/List/Event/Activity 没有部分写入。 |
 | `SERVICE_UNAVAILABLE` | 503 | We couldn't complete your request. Please try again. | 保留用户输入并允许手动重试，不得退出登录。 |
 | `INTERNAL_SERVER_ERROR` | 500 | Something went wrong. Please try again. | 显示 `message` 并允许手动重试。 |
 
@@ -71,14 +83,29 @@ API 负责提供面向用户的英文错误提示。客户端不得解析 `messa
 ```ts
 type FieldError = {
   field: string;
+  code: string;
   message: string;
 };
 ```
 
-- `field` 使用请求 JSON 中公开的 camelCase 字段名，例如 `countryCode` 或 `addressLine1`。
+- `field` 使用请求 JSON 中公开的 camelCase 字段名，例如 `countryCode` 或 `addressLine1`；数组路径使用 `draftItems[0].expectedVersion`。
+- `code` 是稳定的字段级原因，例如 `required`、`invalid_format`、`out_of_range` 或 `unsupported_value`。
 - 客户端在对应表单控件旁显示 `message`。
 - 如果找不到对应字段，客户端应在表单级错误区域显示该提示。
 - 同一个字段存在多个错误时，客户端默认显示第一条。
+
+## Purchase List 结构化 details
+
+客户端只能按 `code` 选择对应的 details shape；不得根据 `message` 推断冲突类型。
+
+- `PURCHASE_DRAFT_VERSION_CONFLICT`：`details.currentVersion`、`details.draftItemId`。
+- `PURCHASE_LIST_VERSION_CONFLICT`：`details.resourceType`（`purchase_list|purchase_list_item|inventory_item`）、`details.resourceId`、`details.currentVersion`。
+- `PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED`：`details.variance` 包含 `zeroReceivedItemCount`、`shortItemCount`、`overItemCount` 和 items；每个 item 包含 `purchaseListItemId`、planned/received/variance quantity 与 `receiptStatus`。
+- `INVENTORY_PURCHASE_LIST_BLOCKED`：`details.blockers[]` 包含 `sourceType`（`draft|approved|ordered`）、`sourceId` 和安全的 `displayName`。
+- `PURCHASE_CORRECTION_NEGATIVE_INVENTORY`：`details.inventoryItemId`、`details.currentInventoryQuantity`、`details.currentTotalReceived`、`details.minimumAllowedTotalReceived`。
+- `IDEMPOTENCY_CONFLICT`：`details.operation`；不得返回内部 fingerprint、原 payload 或其他用户数据。
+
+以上 details 均不得暴露 organization ID、跨租户资源是否存在、内部异常、SQL 或堆栈。validation 继续使用 `fieldErrors`，不复用 details。
 
 ## 前端处理示例
 
@@ -97,6 +124,13 @@ function handleApiError(error: ApiError) {
       return navigateToOrganizationSelector();
     case "INVENTORY_VERSION_CONFLICT":
       return refreshInventoryItemAndRequestConfirmation(error.details?.currentVersion);
+    case "PURCHASE_DRAFT_VERSION_CONFLICT":
+    case "PURCHASE_LIST_VERSION_CONFLICT":
+      return refreshPurchaseDataAndRequestConfirmation();
+    case "PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED":
+      return showPurchaseVarianceConfirmation(error.details?.variance);
+    case "INVENTORY_PURCHASE_LIST_BLOCKED":
+      return showPurchaseBlockers(error.details?.blockers);
     case "REQUEST_VALIDATION_ERROR":
       return applyFieldErrors(error.fieldErrors);
     default:

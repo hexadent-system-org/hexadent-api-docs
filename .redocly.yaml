@@ -1,0 +1,16 @@
+extends:
+  - recommended
+
+apis:
+  hexadent@v1:
+    root: docs/openapi.yaml
+
+rules:
+  info-license: off
+  operation-4xx-response: off
+  tag-description: off
+  no-unused-components: off
+  security-defined: error
+  no-unresolved-refs: error
+  operation-operationId-unique: error
+  no-invalid-media-type-examples: error
