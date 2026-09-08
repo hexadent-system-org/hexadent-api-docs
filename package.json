@@ -1,0 +1,10 @@
+{
+  "name": "hexadent-api-docs",
+  "private": true,
+  "scripts": {
+    "validate": "redocly lint --config .redocly.yaml docs/openapi.yaml && redocly bundle --config .redocly.yaml docs/openapi.yaml --output /tmp/hexadent-openapi-bundle.yaml"
+  },
+  "devDependencies": {
+    "@redocly/cli": "2.51.2"
+  }
+}

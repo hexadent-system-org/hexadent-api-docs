@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: HexaDent AI Inventory Platform API
-  version: 0.5.0
-  description: Web、iOS 与 Android MVP 的统一业务 API Contract。生产域名待定。
+  version: 0.6.0
+  description: Web、iOS 与 Android MVP 的统一业务 API Contract。Purchase List 章节是 contract-first replacement，runtime 尚未实现。生产域名待定。
 servers:
 - url: /v1
   description: 相对 API 版本路径；生产域名待定
@@ -810,7 +810,7 @@ paths:
         name: Idempotency-Key
         in: header
         required: true
-        description: 一次业务提交的随机唯一标识；重试必须复用原值。
+        description: 一次业务提交的随机唯一标识；重试必须复用原值。Key 只在当前 authenticated Organization 与 operationId 范围内生效；相同 key 与相同 material payload 返回原结果，相同 key 与不同 material payload 返回 `IDEMPOTENCY_CONFLICT`。
         schema:
           type: string
           minLength: 8
@@ -1011,7 +1011,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '409':
-          description: 资源状态、版本、重复数据或幂等请求冲突
+          description: Inventory version conflict，或 Draft/Approved/Ordered blocker (`INVENTORY_PURCHASE_LIST_BLOCKED`)
           content:
             application/json:
               schema:
@@ -1098,7 +1098,7 @@ paths:
       tags:
       - Inventory - Items
       operationId: getInventoryRemovalBlockers
-      summary: 查询阻止移除库存的 Active Purchase Lists
+      summary: 查询阻止移除库存的 Draft/Approved/Ordered records
       responses:
         '200':
           description: 阻塞清单
@@ -1124,8 +1124,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: 用于打开 Remove from Inventory 确认界面前的预检查。`purchaseLists` 为空时可继续确认删除；非空时前端展示相关 Active Lists 的入口并禁止删除。真正执行 DELETE
-        时后端仍会再次校验。
+      description: 用于打开 Remove from Inventory 确认界面前的预检查。Draft、Approved 或 Ordered 中存在该 Inventory Item 时返回 blocker；Completed/Cancelled 不阻塞。`blockers` 为空时可继续确认删除，非空时前端展示原因并禁止删除。真正执行 DELETE 时后端仍会再次校验，竞态命中返回 `INVENTORY_PURCHASE_LIST_BLOCKED` 且不移除。
       parameters:
       - *id005
   /inventory/activities:
@@ -1197,548 +1196,298 @@ paths:
           - last_30_days
       - *id003
       - *id004
-  /purchase-lists:
+  /purchase-draft/items:
     get:
-      tags:
-      - Purchase Lists
-      operationId: listPurchaseLists
-      summary: 查询 Active 或 Completed Purchase Lists
-      responses:
-        '200':
-          description: Purchase List 分页结果
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PurchaseListPage'
-        '401':
-          description: Access Token 缺失、无效或已过期
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '422':
-          description: 字段未通过业务校验
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-      description: 列表只返回 Purchase List 摘要与进度统计，不返回具体 Items；进入单个清单后通过 `GET /purchase-lists/{purchaseListId}` 获取 Items。
+      tags: [Purchase Lists]
+      operationId: listPurchaseDraftItems
+      summary: 查询 Organization shared Purchase Draft
+      description: 所有 active Member 可读。默认按 `updatedAt DESC, id DESC` 稳定排序；分页期间数据变化时客户端应从第一页刷新。
       parameters:
-      - name: status
+      - name: keyword
         in: query
-        required: false
-        description: List 状态
-        schema:
-          type: string
-          enum:
-          - active
-          - completed
-      - *id002
+        schema: {type: string, maxLength: 300}
+        description: 按 Product Name、Brand、Manufacturer、MFG Number 或 Barcode 搜索。
+      - name: vendor
+        in: query
+        schema: {type: string, maxLength: 160}
       - *id003
       - *id004
-    post:
-      tags:
-      - Purchase Lists
-      operationId: createPurchaseList
-      summary: 创建 Active Purchase List，可选同时加入已选库存商品
       responses:
-        '401':
-          description: Access Token 缺失、无效或已过期
+        '200':
+          description: Draft item 分页结果
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
+              schema: {$ref: '#/components/schemas/PurchaseDraftItemPage'}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许访问, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 查询参数未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+    post:
+      tags: [Purchase Lists]
+      operationId: addPurchaseDraftItems
+      summary: 批量加入 shared Purchase Draft
+      description: 所有 active Member 可写。请求全有或全无；每个 Inventory Item 在 Draft 最多一行。已存在项不会累加，成功响应返回其当前 item 与 version。同一请求重复 `inventoryItemId`（即使其他字段不同）返回 `REQUEST_VALIDATION_ERROR` 422，整批不写入。
+      parameters: [*id006]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseDraftBulkAddRequest'}
+            example:
+              items:
+              - inventoryItemId: 11111111-1111-4111-8111-111111111111
+                plannedQuantity: '5.00'
+                vendor: K-Dental
+                vendorItemNumber: KD-49135
+                unitPrice: '45.00'
+                notes: Order before Friday
+              - inventoryItemId: 22222222-2222-4222-8222-222222222222
+                plannedQuantity: '2.00'
+                vendor: null
+                vendorItemNumber: null
+                unitPrice: null
+                notes: null
+      responses:
+        '200':
+          description: 全部条目的 added/existing 结果
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '409':
-          description: 资源状态、版本、重复数据或幂等请求冲突
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '422':
-          description: 字段未通过业务校验
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '201':
-          description: 创建后的 Purchase List 详情
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PurchaseListDetail'
-      description: 不传 `items` 时创建空清单；传入 `items` 时，创建清单与加入商品在同一数据库事务中全部成功或全部回滚。
+              schema: {$ref: '#/components/schemas/PurchaseDraftBulkAddResult'}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: Inventory Item 在当前 Organization 下不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: 幂等 key 与 material payload 冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 任一条目无效；整批不写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+  /purchase-draft/items/{draftItemId}:
+    patch:
+      tags: [Purchase Lists]
+      operationId: updatePurchaseDraftItem
+      summary: 更新 shared Draft item
+      description: '`plannedQuantity` 是保存后的最终 total，不是 delta；未提供的可选字段保持不变，显式 null 清空可空字段。'
       parameters:
+      - &id007
+        name: draftItemId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
       - *id006
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/PurchaseListCreateRequest'
-            examples:
-              emptyList:
-                summary: 只创建空 Purchase List
-                value:
-                  name: Weekly Order
-                  notes: Order before Friday
-              listWithSelectedItems:
-                summary: 创建 Purchase List 并加入已选库存商品
-                value:
-                  name: Weekly Order
-                  notes: Order before Friday
-                  items:
-                  - inventoryItemId: 11111111-1111-4111-8111-111111111111
-                    requestedQuantity: '5.00'
-                  - inventoryItemId: 22222222-2222-4222-8222-222222222222
-                    requestedQuantity: '2.00'
+            schema: {$ref: '#/components/schemas/PurchaseDraftItemUpdateRequest'}
+      responses:
+        '200': {description: 更新后的 Draft item, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseDraftItem'}}}}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下不存在；跨租户 ID 同样返回 404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: Draft version 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 字段未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+    delete:
+      tags: [Purchase Lists]
+      operationId: deletePurchaseDraftItem
+      summary: 从 shared Draft 移除 item
+      parameters:
+      - *id007
+      - *id006
+      - name: If-Match
+        in: header
+        required: true
+        description: 当前 Draft item version，格式例如 `"7"`。
+        schema: {type: string, pattern: '^"[1-9]\d{0,18}"$', maxLength: 21, example: '"7"'}
+      responses:
+        '204': {description: 已移除}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下不存在；跨租户 ID 同样返回 404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: Draft version 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: If-Match 缺失或格式错误, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+  /purchase-lists:
+    get:
+      tags: [Purchase Lists]
+      operationId: listPurchaseLists
+      summary: 查询 Purchase Lists
+      description: 所有 active Member 可读。Cancelled 不出现在 MVP 列表。`keyword` 先做 Unicode NFKC、连续空白折叠和大小写归一化，再对 List name/notes 与 item snapshot 的 productName、brandName、vendor、vendorItemNumber 做包含匹配；任一字段匹配即返回该 List。默认按 `updatedAt DESC, id DESC` 稳定排序。
+      parameters:
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum: [approved, ordered, completed]
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200': {description: Purchase List 分页结果, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListPage'}}}}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许访问, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 查询参数未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+    post:
+      tags: [Purchase Lists]
+      operationId: approvePurchaseDraftItems
+      summary: 审批所选 Draft items 并创建 Purchase List
+      description: 仅 actual actor 为 Admin/Manager 时允许。selected approver 必须是同 Organization 的 active Admin/Manager。服务端在单一幂等事务校验全部 item version、创建 Approved snapshot 并移除所选 Draft items；任一失败均不产生部分写入。同一请求重复 `draftItemId`（即使 expectedVersion 不同）返回 `REQUEST_VALIDATION_ERROR` 422，不创建 List 或移除 Draft item。
+      parameters: [*id006]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseListApprovalRequest'}
+            example:
+              name: September restorative order
+              notes: Approved for weekly purchasing
+              selectedApproverMembershipId: 33333333-3333-4333-8333-333333333333
+              draftItems:
+              - draftItemId: 44444444-4444-4444-8444-444444444444
+                expectedVersion: 3
+      responses:
+        '201': {description: 新建且不可编辑的 Approved Purchase List, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: actor 或 selected approver 不满足权限要求, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 任一资源在当前 Organization 下不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: Draft version、state 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 字段或所选 Draft 集合未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-lists/{purchaseListId}:
     get:
-      tags:
-      - Purchase Lists
+      tags: [Purchase Lists]
       operationId: getPurchaseList
-      summary: 获取 Purchase List 详情与 Items
-      responses:
-        '200':
-          description: Purchase List 详情
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PurchaseListDetail'
-        '401':
-          description: Access Token 缺失、无效或已过期
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '404':
-          description: 当前 Organization 下资源不存在
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+      summary: 获取 Purchase List 审计详情
+      description: 所有 active Member 可读。已知 ID 可返回 Cancelled snapshot；跨租户 ID 与不存在一致返回 404。
       parameters:
-      - &id007
+      - &id008
         name: purchaseListId
         in: path
         required: true
-        description: Purchase List ID
-        schema:
-          type: string
-          format: uuid
-    patch:
-      tags:
-      - Purchase Lists
-      operationId: updatePurchaseList
-      summary: 编辑 Active Purchase List
+        schema: {type: string, format: uuid}
       responses:
-        '200':
-          description: 更新后的 Purchase List
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PurchaseListMutationResult'
-        '401':
-          description: Access Token 缺失、无效或已过期
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '404':
-          description: 当前 Organization 下资源不存在
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '409':
-          description: 资源状态、版本、重复数据或幂等请求冲突
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '422':
-          description: 字段未通过业务校验
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-      description: '`includeItems=false` 或不传时响应不包含 `items`；`includeItems=true` 时返回更新后的完整 Items。'
-      parameters:
-      - *id007
-      - &id008
-        name: includeItems
-        in: query
-        required: false
-        description: 是否在响应中返回完整 Purchase List Items；默认 false。
-        schema:
-          type: boolean
-          default: false
+        '200': {description: Purchase List 与 item snapshots, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许访问, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下不存在；跨租户 ID 同样返回 404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+  /purchase-lists/{purchaseListId}/order:
+    post:
+      tags: [Purchase Lists]
+      operationId: orderPurchaseList
+      summary: 将 Approved List 标记为 Ordered
+      description: 所有 active Member 可执行；只允许 `approved → ordered`，内容 snapshot 不变。
+      parameters: [*id008, *id006]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListVersionRequest'}}}
+      responses:
+        '200': {description: Ordered Purchase List, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List state/version 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 请求未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+  /purchase-lists/{purchaseListId}/cancellation:
+    post:
+      tags: [Purchase Lists]
+      operationId: cancelPurchaseList
+      summary: 取消未收货的 Approved List
+      description: 所有 active Member 可执行。仅 Approved 且没有 receipt history 时允许；保留 Cancelled snapshot，并在同一事务把 planned quantities 恢复到 shared Draft。若 Inventory Item 已有 Draft row，只累加 plannedQuantity 并保留该 row 当前的 vendor、vendorItemNumber、unitPrice 和 notes；若没有，则从 Cancelled item snapshot 初始化这些 metadata。任一失败均不产生部分写入。
+      parameters: [*id008, *id006]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/PurchaseListWriteRequest'
-    delete:
-      tags:
-      - Purchase Lists
-      operationId: deletePurchaseList
-      summary: 删除 Active Purchase List
+            schema: {$ref: '#/components/schemas/PurchaseListCancellationRequest'}
+            example: {expectedListVersion: 2, reason: Duplicate order}
       responses:
-        '401':
-          description: Access Token 缺失、无效或已过期
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '404':
-          description: 当前 Organization 下资源不存在
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '409':
-          description: 资源状态、版本、重复数据或幂等请求冲突
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '204':
-          description: 操作成功，无响应体
-      parameters:
-      - *id007
+        '200': {description: Cancelled snapshot 与 Draft restore 结果, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListCancellationResult'}}}}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List state/version、receipt history 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 请求未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-lists/{purchaseListId}/completion:
     post:
-      tags:
-      - Purchase Lists
+      tags: [Purchase Lists]
       operationId: completePurchaseList
-      summary: 完成已全部收货的 Purchase List
+      summary: 完成 Ordered Purchase List
+      description: 所有 active Member 可执行。允许 zero-received、short、exact 和 over；存在 variance 且 `confirmVariance=false` 时返回 `PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED` 与 summary。确认后只转换状态并写 audit，不调整 Inventory。
+      parameters: [*id008, *id006]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListCompletionRequest'}}}
       responses:
-        '200':
-          description: Completed Purchase List
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PurchaseListMutationResult'
-        '401':
-          description: Access Token 缺失、无效或已过期
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '404':
-          description: 当前 Organization 下资源不存在
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '409':
-          description: 资源状态、版本、重复数据或幂等请求冲突
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-      description: '`includeItems=false` 或不传时响应不包含 `items`；`includeItems=true` 时返回完成后的完整 Items。'
-      parameters:
-      - *id007
-      - *id008
+        '200': {description: Completed Purchase List, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List state/version、variance confirmation 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 请求未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-lists/{purchaseListId}/export:
     get:
-      tags:
-      - Purchase Lists
+      tags: [Purchase Lists]
       operationId: exportPurchaseList
-      summary: 导出 Purchase List
-      responses:
-        '200':
-          description: CSV 或 PDF 文件流
-          content:
-            text/csv:
-              schema:
-                type: string
-                format: binary
-            application/pdf:
-              schema:
-                type: string
-                format: binary
-        '401':
-          description: Access Token 缺失、无效或已过期
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '404':
-          description: 当前 Organization 下资源不存在
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '422':
-          description: 字段未通过业务校验
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '503':
-          description: 依赖服务暂不可用
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+      summary: 导出 Purchase List snapshot
+      description: 所有 active Member 可导出 Approved、Ordered 或 Completed List，最多 1,000 items。CSV 使用 UTF-8、RFC 4180 escaping；PDF 重复表头并分页。列为 Product、Brand、Specification、Unit、Planned、Received、Variance、Receipt Status、Vendor、Vendor Item Number、Unit Price、Notes。响应必须设置正确 Content-Type，并使用 `filename` ASCII fallback 与 RFC 5987 `filename*` UTF-8 编码支持 Unicode 名称。
       parameters:
-      - *id007
+      - *id008
       - name: format
         in: query
         required: true
-        description: 导出格式
-        schema:
-          type: string
-          enum:
-          - csv
-          - pdf
-  /purchase-lists/{purchaseListId}/items:
+        schema: {type: string, enum: [csv, pdf]}
+      responses:
+        '200':
+          description: CSV 或 PDF 文件流，包含 Content-Disposition attachment header
+          headers:
+            Content-Disposition:
+              required: true
+              schema: {type: string}
+              example: attachment; filename="purchase-list.csv"; filename*=UTF-8''September%20Order.csv
+          content:
+            text/csv: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许导出, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下不存在；跨租户 ID 同样返回 404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List state 不允许导出, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '413': {description: 'List 超过 1,000 items', content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '503': {description: 文件生成依赖暂不可用, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+  /purchase-list-items/{itemId}/receipts:
     post:
-      tags:
-      - Purchase Lists
-      operationId: addItemsToPurchaseList
-      summary: 将一个或多个库存商品加入一个 Purchase List
-      responses:
-        '200':
-          description: 商品添加结果
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PurchaseListItemsAddResult'
-        '401':
-          description: Access Token 缺失、无效或已过期
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '404':
-          description: 当前 Organization 下资源不存在
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '409':
-          description: 资源状态、版本、重复数据或幂等请求冲突
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '422':
-          description: 字段未通过业务校验
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-      description: MVP 每次只操作 Path 指定的一个 Active Purchase List。已在清单中的 Inventory Item 返回在 `skipped`；任一其他 Item 无效、已移除或跨租户时，整次请求失败且不添加任何新行。
-      parameters:
-      - *id007
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PurchaseListItemsAddRequest'
-  /purchase-list-items/{itemId}:
-    patch:
-      tags:
-      - Purchase Lists
-      operationId: updatePurchaseListItem
-      summary: 修改 Requested Quantity
-      responses:
-        '200':
-          description: 更新后的 Purchase List Item
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PurchaseListItem'
-        '401':
-          description: Access Token 缺失、无效或已过期
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '404':
-          description: 当前 Organization 下资源不存在
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '409':
-          description: 资源状态、版本、重复数据或幂等请求冲突
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '422':
-          description: 字段未通过业务校验
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+      tags: [Purchase Lists]
+      operationId: receivePurchaseListItem
+      summary: 记录 Ordered item 的一次收货
+      description: 所有 active Member 可执行。`quantityReceived` 必须大于 0、最多两位小数；允许 over-receipt。单一事务更新 Inventory 与 List Item，写入不可变 event 和 Inventory Activity。over-receipt 以成功响应中的结构化 warning 表达。
       parameters:
       - &id009
         name: itemId
         in: path
         required: true
-        description: Purchase List Item ID
-        schema:
-          type: string
-          format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RequestedQuantityUpdateRequest'
-    delete:
-      tags:
-      - Purchase Lists
-      operationId: deletePurchaseListItem
-      summary: 从 Active List 移除 Item
-      responses:
-        '401':
-          description: Access Token 缺失、无效或已过期
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '404':
-          description: 当前 Organization 下资源不存在
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '409':
-          description: 资源状态、版本、重复数据或幂等请求冲突
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '204':
-          description: 操作成功，无响应体
-      parameters:
-      - *id009
-  /purchase-list-items/{itemId}/receipts:
-    post:
-      tags:
-      - Purchase Lists
-      operationId: receivePurchaseListItem
-      summary: 确认一次分批收货
-      responses:
-        '200':
-          description: Receipt 与更新后的 Purchase List Item
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PurchaseReceiptResult'
-        '400':
-          description: 请求格式或参数组合无效
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '401':
-          description: Access Token 缺失、无效或已过期
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '404':
-          description: 当前 Organization 下资源不存在
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '409':
-          description: 资源状态、版本、重复数据或幂等请求冲突
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-        '422':
-          description: 字段未通过业务校验
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-      description: 后端仍在同一事务中更新 Inventory Item 并创建 Purchase Receipt Activity，但响应只返回本页立即需要的 Receipt 和更新后的 Purchase List Item。
-      parameters:
-      - *id009
+        schema: {type: string, format: uuid}
       - *id006
       requestBody:
         required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PurchaseReceiptRequest'
+        content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseReceiptRequest'}}}
+      responses:
+        '200': {description: Receipt event、Activity reference、更新后的 List Item 与 Inventory version, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseReceiptResult'}}}}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下 item 不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List state、item/inventory version 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: quantity、date 或 request field 未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '503': {description: Inventory Activity dependency 暂不可用且事务未写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+  /purchase-list-items/{itemId}/receipt-corrections:
+    post:
+      tags: [Purchase Lists]
+      operationId: correctPurchaseListItemReceiptTotal
+      summary: 设定 Ordered item 的累计实收总数
+      description: 所有 active Member 可执行。服务端锁定记录后以 `totalReceived - currentTotal` 计算 delta；total 可为 0。相同 total 是 no-op，不创建 event/Activity，也不增加任何 version。非零 delta 原子调整 Inventory；不得令 total 或 Inventory quantity 小于 0。
+      parameters: [*id009, *id006]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseReceiptCorrectionRequest'}}}
+      responses:
+        '200': {description: Correction 结果；no-op 时 event/activity 为 null 且 versions 不变, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseReceiptCorrectionResult'}}}}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下 item 不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List state、item/inventory version、negative inventory 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: total、date 或 request field 未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '503': {description: Inventory Activity dependency 暂不可用且事务未写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /dashboard:
     get:
       tags:
@@ -3253,12 +3002,19 @@ components:
     PurchaseListBlockers:
       type: object
       required:
-      - purchaseLists
+      - blockers
       properties:
-        purchaseLists:
+        blockers:
           type: array
           items:
-            $ref: '#/components/schemas/EntityReference'
+            type: object
+            required: [sourceType, sourceId, displayName]
+            properties:
+              sourceType: {type: string, enum: [draft, approved, ordered]}
+              sourceId: *id001
+              displayName:
+                type: string
+                description: Draft 固定返回 `Purchase Draft`；List 返回 snapshot name。
     OnboardingRequest:
       type: object
       required:
@@ -3678,265 +3434,372 @@ components:
           type: array
           items:
             type: string
-    PurchaseListItem:
+    PurchaseActor:
       type: object
-      required:
-      - id
-      - inventoryItemId
-      - productName
-      - brandName
-      - specification
-      - unitName
-      - requestedQuantity
-      - receivedQuantity
-      - remainingQuantity
-      - receiptStatus
+      required: [membershipId, displayName, role]
+      properties:
+        membershipId: *id001
+        displayName: {type: string}
+        role: {type: string, enum: [admin, manager, member]}
+    PurchaseDraftItem:
+      type: object
+      required: [id, inventoryItemId, productName, brandName, specification, unitName, quantityOnHand, plannedQuantity, vendor, vendorItemNumber, unitPrice, notes, incomingSummary, version, createdAt, updatedAt]
       properties:
         id: *id001
         inventoryItemId: *id001
-        productName:
-          type: string
-        brandName:
-          type: string
+        productName: {type: string}
+        brandName: {type: [string, 'null']}
+        manufacturer: *id013
+        mfgNumber: *id013
+        barcode: *id013
         specification: *id013
-        unitName:
-          type: string
-        requestedQuantity: *id014
-        receivedQuantity: *id014
-        remainingQuantity: *id014
-        receiptStatus:
-          type: string
-          enum:
-          - pending
-          - partially_received
-          - received
-    PurchaseListSummary:
+        unitName: {type: string}
+        quantityOnHand: *id014
+        plannedQuantity: *id015
+        vendor: {type: [string, 'null'], maxLength: 160}
+        vendorItemNumber: {type: [string, 'null'], maxLength: 160}
+        unitPrice: {anyOf: [*id014, {type: 'null'}]}
+        notes: {type: [string, 'null'], maxLength: 2000}
+        incomingSummary:
+          type: object
+          description: 该 Inventory Item 在 approved/ordered lists 中的 snapshot 汇总；不含 Draft 当前行。
+          required: [listCount, plannedQuantity, receivedQuantity, remainingQuantity]
+          properties:
+            listCount: {type: integer, minimum: 0}
+            plannedQuantity: *id014
+            receivedQuantity: *id014
+            remainingQuantity: *id016
+        version: {type: integer, minimum: 1}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+      example:
+        id: 44444444-4444-4444-8444-444444444444
+        inventoryItemId: 11111111-1111-4111-8111-111111111111
+        productName: Nitrile Exam Gloves
+        brandName: Example Brand
+        manufacturer: Example Manufacturer
+        mfgNumber: NG-100
+        barcode: null
+        specification: 100 / box
+        unitName: Box
+        quantityOnHand: '8.00'
+        plannedQuantity: '5.00'
+        vendor: K-Dental
+        vendorItemNumber: KD-49135
+        unitPrice: '45.00'
+        notes: Order before Friday
+        incomingSummary: {listCount: 1, plannedQuantity: '3.00', receivedQuantity: '1.00', remainingQuantity: '2.00'}
+        version: 3
+        createdAt: '2026-09-08T10:00:00-04:00'
+        updatedAt: '2026-09-08T10:30:00-04:00'
+    PurchaseDraftItemPage:
       type: object
-      required:
-      - id
-      - name
-      - status
-      - progressStatus
-      - progress
-      - createdAt
-      - updatedAt
+      required: [items, pagination]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/PurchaseDraftItem'}}
+        pagination: {$ref: '#/components/schemas/Pagination'}
+    PurchaseDraftItemInput:
+      type: object
+      additionalProperties: false
+      required: [inventoryItemId, plannedQuantity]
+      properties:
+        inventoryItemId: *id001
+        plannedQuantity: *id015
+        vendor: {type: [string, 'null'], maxLength: 160}
+        vendorItemNumber: {type: [string, 'null'], maxLength: 160}
+        unitPrice: {anyOf: [*id014, {type: 'null'}]}
+        notes: {type: [string, 'null'], maxLength: 2000}
+    PurchaseDraftBulkAddRequest:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/PurchaseDraftItemInput'}
+    PurchaseDraftBulkAddResult:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [disposition, draftItem]
+            properties:
+              disposition: {type: string, enum: [added, existing]}
+              draftItem: {$ref: '#/components/schemas/PurchaseDraftItem'}
+    PurchaseDraftItemUpdateRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [expectedVersion]
+      properties:
+        expectedVersion: {type: integer, minimum: 1}
+        plannedQuantity: *id015
+        vendor: {type: [string, 'null'], maxLength: 160}
+        vendorItemNumber: {type: [string, 'null'], maxLength: 160}
+        unitPrice: {anyOf: [*id014, {type: 'null'}]}
+        notes: {type: [string, 'null'], maxLength: 2000}
+    PurchaseListItem:
+      type: object
+      required: [id, inventoryItemId, productName, brandName, specification, unitName, plannedQuantity, receivedQuantity, remainingQuantity, varianceQuantity, receiptStatus, vendor, vendorItemNumber, unitPrice, notes, version]
       properties:
         id: *id001
-        name:
-          type: string
-        notes: *id013
-        status:
-          type: string
-          enum:
-          - active
-          - completed
-        progressStatus:
-          type: string
-          enum:
-          - open
-          - partially_received
-          - all_received
-        progress:
+        inventoryItemId: *id001
+        productName: {type: string}
+        brandName: {type: [string, 'null']}
+        manufacturer: *id013
+        mfgNumber: *id013
+        barcode: *id013
+        specification: *id013
+        unitName: {type: string}
+        plannedQuantity: *id015
+        receivedQuantity: *id014
+        remainingQuantity:
+          <<: *id016
+          description: '`plannedQuantity - receivedQuantity`；over-received 时为负数。'
+        varianceQuantity:
+          <<: *id016
+          description: '`receivedQuantity - plannedQuantity`；shortfall 时为负数。'
+        receiptStatus: {type: string, enum: [not_received, partially_received, received, over_received]}
+        vendor: {type: [string, 'null']}
+        vendorItemNumber: {type: [string, 'null']}
+        unitPrice: {anyOf: [*id014, {type: 'null'}]}
+        notes: {type: [string, 'null']}
+        version: {type: integer, minimum: 1}
+    PurchaseListSummary:
+      type: object
+      required: [id, name, status, itemCount, receiptCounts, version, approvedBy, selectedApprover, approvedAt, orderedBy, orderedAt, completedBy, completedAt, cancelledBy, cancelledAt, createdAt, updatedAt]
+      properties:
+        id: *id001
+        name: {type: string, minLength: 1, maxLength: 200}
+        notes: {type: [string, 'null'], maxLength: 2000}
+        status: {type: string, enum: [approved, ordered, completed, cancelled]}
+        itemCount: {type: integer, minimum: 1}
+        receiptCounts:
           type: object
-          required:
-          - receivedItemCount
-          - totalItemCount
-          - percentage
+          required: [notReceived, partiallyReceived, received, overReceived]
           properties:
-            receivedItemCount:
-              type: integer
-              minimum: 0
-            totalItemCount:
-              type: integer
-              minimum: 0
-            percentage: *id014
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-        completedAt:
-          type:
-          - string
-          - 'null'
-          format: date-time
+            notReceived: {type: integer, minimum: 0}
+            partiallyReceived: {type: integer, minimum: 0}
+            received: {type: integer, minimum: 0}
+            overReceived: {type: integer, minimum: 0}
+        version: {type: integer, minimum: 1}
+        approvedBy: {$ref: '#/components/schemas/PurchaseActor'}
+        selectedApprover: {$ref: '#/components/schemas/PurchaseActor'}
+        approvedAt: {type: string, format: date-time}
+        orderedBy: {anyOf: [{$ref: '#/components/schemas/PurchaseActor'}, {type: 'null'}]}
+        orderedAt: {type: [string, 'null'], format: date-time}
+        completedBy: {anyOf: [{$ref: '#/components/schemas/PurchaseActor'}, {type: 'null'}]}
+        completedAt: {type: [string, 'null'], format: date-time}
+        cancelledBy: {anyOf: [{$ref: '#/components/schemas/PurchaseActor'}, {type: 'null'}]}
+        cancelledAt: {type: [string, 'null'], format: date-time}
+        cancellationReason: {type: [string, 'null'], maxLength: 1000}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
     PurchaseListDetail:
       allOf:
       - $ref: '#/components/schemas/PurchaseListSummary'
       - type: object
-        required:
-        - items
+        required: [items]
         properties:
-          items:
-            type: array
-            items:
-              $ref: '#/components/schemas/PurchaseListItem'
-    PurchaseListMutationResult:
-      allOf:
-      - $ref: '#/components/schemas/PurchaseListSummary'
-      - type: object
-        properties:
-          items:
-            type: array
-            items:
-              $ref: '#/components/schemas/PurchaseListItem'
-            description: 仅当 includeItems=true 时返回；清单无商品时为空数组。
+          items: {type: array, minItems: 1, items: {$ref: '#/components/schemas/PurchaseListItem'}}
+      example:
+        id: 55555555-5555-4555-8555-555555555555
+        name: September restorative order
+        notes: Approved for weekly purchasing
+        status: ordered
+        itemCount: 1
+        receiptCounts: {notReceived: 0, partiallyReceived: 1, received: 0, overReceived: 0}
+        version: 2
+        approvedBy: {membershipId: 33333333-3333-4333-8333-333333333333, displayName: Alex Chen, role: manager}
+        selectedApprover: {membershipId: 33333333-3333-4333-8333-333333333333, displayName: Alex Chen, role: manager}
+        approvedAt: '2026-09-08T11:00:00-04:00'
+        orderedBy: {membershipId: 66666666-6666-4666-8666-666666666666, displayName: Sam Lee, role: member}
+        orderedAt: '2026-09-08T12:00:00-04:00'
+        completedBy: null
+        completedAt: null
+        cancelledBy: null
+        cancelledAt: null
+        cancellationReason: null
+        createdAt: '2026-09-08T11:00:00-04:00'
+        updatedAt: '2026-09-08T12:30:00-04:00'
+        items:
+        - id: 77777777-7777-4777-8777-777777777777
+          inventoryItemId: 11111111-1111-4111-8111-111111111111
+          productName: Nitrile Exam Gloves
+          brandName: Example Brand
+          manufacturer: Example Manufacturer
+          mfgNumber: NG-100
+          barcode: null
+          specification: 100 / box
+          unitName: Box
+          plannedQuantity: '5.00'
+          receivedQuantity: '2.00'
+          remainingQuantity: '3.00'
+          varianceQuantity: '-3.00'
+          receiptStatus: partially_received
+          vendor: K-Dental
+          vendorItemNumber: KD-49135
+          unitPrice: '45.00'
+          notes: Order before Friday
+          version: 2
     PurchaseListPage:
       type: object
-      required:
-      - items
-      - pagination
-      - counts
+      required: [items, pagination, counts]
       properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/PurchaseListSummary'
-        pagination:
-          $ref: '#/components/schemas/Pagination'
+        items: {type: array, items: {$ref: '#/components/schemas/PurchaseListSummary'}}
+        pagination: {$ref: '#/components/schemas/Pagination'}
         counts:
           type: object
-          required:
-          - active
-          - completed
+          required: [approved, ordered, completed]
           properties:
-            active:
-              type: integer
-            completed:
-              type: integer
-    PurchaseListWriteRequest:
+            approved: {type: integer, minimum: 0}
+            ordered: {type: integer, minimum: 0}
+            completed: {type: integer, minimum: 0}
+    PurchaseListApprovalRequest:
       type: object
-      required:
-      - name
+      additionalProperties: false
+      required: [name, selectedApproverMembershipId, draftItems]
       properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 200
-        notes:
-          type:
-          - string
-          - 'null'
-          maxLength: 2000
-    PurchaseListCreateRequest:
-      type: object
-      required:
-      - name
-      properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 200
-        notes:
-          type:
-          - string
-          - 'null'
-          maxLength: 2000
-        items:
-          type: array
-          minItems: 1
-          description: 可选。传入时在创建 Purchase List 的同一事务中加入已选 Inventory Items；不传时创建空清单。
-          items:
-            type: object
-            required:
-            - inventoryItemId
-            - requestedQuantity
-            properties:
-              inventoryItemId: *id001
-              requestedQuantity: *id015
-    PurchaseListItemsAddRequest:
-      type: object
-      required:
-      - items
-      properties:
-        items:
+        name: {type: string, minLength: 1, maxLength: 200}
+        notes: {type: [string, 'null'], maxLength: 2000}
+        selectedApproverMembershipId: *id001
+        draftItems:
           type: array
           minItems: 1
           items:
             type: object
-            required:
-            - inventoryItemId
-            - requestedQuantity
+            additionalProperties: false
+            required: [draftItemId, expectedVersion]
             properties:
-              inventoryItemId: *id001
-              requestedQuantity: *id015
-    PurchaseListItemsAddResult:
+              draftItemId: *id001
+              expectedVersion: {type: integer, minimum: 1}
+    PurchaseListVersionRequest:
       type: object
-      required:
-      - purchaseListId
-      - added
-      - skipped
+      additionalProperties: false
+      required: [expectedListVersion]
       properties:
-        purchaseListId: *id001
-        added:
+        expectedListVersion: {type: integer, minimum: 1}
+    PurchaseListCancellationRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedListVersion]
+      properties:
+        expectedListVersion: {type: integer, minimum: 1}
+        reason: {type: [string, 'null'], maxLength: 1000}
+    PurchaseListCancellationResult:
+      type: object
+      required: [purchaseList, restoredDraftItems]
+      properties:
+        purchaseList: {$ref: '#/components/schemas/PurchaseListDetail'}
+        restoredDraftItems:
           type: array
+          description: '`merged` 表示数量累加到已有 Draft row；`created` 表示新建。'
           items:
             type: object
-            required:
-            - purchaseListItemId
-            - inventoryItemId
+            required: [disposition, draftItem]
             properties:
-              purchaseListItemId: *id001
-              inventoryItemId: *id001
-        skipped:
-          type: array
-          items:
-            type: object
-            required:
-            - inventoryItemId
-            - reason
-            properties:
-              inventoryItemId: *id001
-              reason:
-                type: string
-                enum:
-                - already_in_list
-    RequestedQuantityUpdateRequest:
+              disposition: {type: string, enum: [created, merged]}
+              draftItem: {$ref: '#/components/schemas/PurchaseDraftItem'}
+    PurchaseListCompletionRequest:
       type: object
-      required:
-      - requestedQuantity
+      additionalProperties: false
+      required: [expectedListVersion, confirmVariance]
       properties:
-        requestedQuantity: *id015
+        expectedListVersion: {type: integer, minimum: 1}
+        confirmVariance:
+          type: boolean
+          description: 有任何 zero/short/over variance 时必须为 true；exact-only List 可为 false。
     PurchaseReceiptRequest:
       type: object
-      required:
-      - quantityReceived
+      additionalProperties: false
+      required: [quantityReceived, expectedListVersion, expectedItemVersion, expectedInventoryVersion]
       properties:
         quantityReceived: *id015
-        vendorReceiptNumber:
-          type:
-          - string
-          - 'null'
-          maxLength: 160
-        receivedAt:
-          type:
-          - string
-          - 'null'
-          format: date-time
-    PurchaseReceipt:
+        expectedListVersion: {type: integer, minimum: 1}
+        expectedItemVersion: {type: integer, minimum: 1}
+        expectedInventoryVersion: {type: integer, minimum: 1}
+        vendorReceiptNumber: {type: [string, 'null'], maxLength: 160}
+        receivedAt: {type: [string, 'null'], format: date-time}
+    PurchaseReceiptCorrectionRequest:
       type: object
-      required:
-      - id
-      - quantityReceived
-      - receivedAt
+      additionalProperties: false
+      required: [totalReceived, expectedListVersion, expectedItemVersion, expectedInventoryVersion]
+      properties:
+        totalReceived: *id014
+        expectedListVersion: {type: integer, minimum: 1}
+        expectedItemVersion: {type: integer, minimum: 1}
+        expectedInventoryVersion: {type: integer, minimum: 1}
+        reason: {type: string, minLength: 1, maxLength: 1000}
+        correctedAt: {type: [string, 'null'], format: date-time}
+    PurchaseReceiptEvent:
+      type: object
+      required: [id, eventType, quantityDelta, totalReceivedAfter, occurredAt, actor]
       properties:
         id: *id001
-        quantityReceived: *id014
+        eventType: {type: string, enum: [receipt, correction]}
+        quantityDelta: *id016
+        totalReceivedAfter: *id014
         vendorReceiptNumber: *id013
-        receivedAt:
-          type: string
-          format: date-time
+        reason: *id013
+        occurredAt: {type: string, format: date-time}
+        actor: {$ref: '#/components/schemas/PurchaseActor'}
+    InventoryActivityReference:
+      type: object
+      required: [id, inventoryItemId, version]
+      properties:
+        id: *id001
+        inventoryItemId: *id001
+        version: {type: integer, minimum: 1}
+    PurchaseReceiptWarning:
+      type: object
+      required: [code, plannedQuantity, totalReceived, overReceivedBy]
+      properties:
+        code: {type: string, const: PURCHASE_ITEM_OVER_RECEIVED}
+        plannedQuantity: *id015
+        totalReceived: *id014
+        overReceivedBy: *id015
     PurchaseReceiptResult:
       type: object
-      required:
-      - receipt
-      - purchaseListItem
+      required: [event, activity, purchaseListItem, inventoryVersion, warning]
       properties:
-        receipt:
-          $ref: '#/components/schemas/PurchaseReceipt'
-        purchaseListItem:
-          $ref: '#/components/schemas/PurchaseListItem'
+        event: {$ref: '#/components/schemas/PurchaseReceiptEvent'}
+        activity: {$ref: '#/components/schemas/InventoryActivityReference'}
+        purchaseListItem: {$ref: '#/components/schemas/PurchaseListItem'}
+        inventoryVersion: {type: integer, minimum: 1}
+        warning: {anyOf: [{$ref: '#/components/schemas/PurchaseReceiptWarning'}, {type: 'null'}]}
+    PurchaseReceiptCorrectionResult:
+      type: object
+      required: [noOp, event, activity, purchaseListItem, inventoryVersion]
+      properties:
+        noOp: {type: boolean}
+        event: {anyOf: [{$ref: '#/components/schemas/PurchaseReceiptEvent'}, {type: 'null'}]}
+        activity: {anyOf: [{$ref: '#/components/schemas/InventoryActivityReference'}, {type: 'null'}]}
+        purchaseListItem: {$ref: '#/components/schemas/PurchaseListItem'}
+        inventoryVersion: {type: integer, minimum: 1}
+        warning: {anyOf: [{$ref: '#/components/schemas/PurchaseReceiptWarning'}, {type: 'null'}]}
+    PurchaseListVarianceSummary:
+      type: object
+      description: '`PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED` 的 `error.details.variance` shape。'
+      required: [zeroReceivedItemCount, shortItemCount, overItemCount, items]
+      properties:
+        zeroReceivedItemCount: {type: integer, minimum: 0}
+        shortItemCount: {type: integer, minimum: 0}
+        overItemCount: {type: integer, minimum: 0}
+        items:
+          type: array
+          items:
+            type: object
+            required: [purchaseListItemId, plannedQuantity, receivedQuantity, varianceQuantity, receiptStatus]
+            properties:
+              purchaseListItemId: *id001
+              plannedQuantity: *id015
+              receivedQuantity: *id014
+              varianceQuantity: *id016
+              receiptStatus: {type: string, enum: [not_received, partially_received, over_received]}
     DashboardSummary:
       type: object
       required:
@@ -4095,26 +3958,27 @@ components:
     DashboardPurchaseListOverview:
       type: object
       required:
-      - activeLists
+      - openLists
       - itemsRemaining
-      - readyToComplete
+      - varianceFreeOrderedLists
       - recentLists
       properties:
-        activeLists:
+        openLists:
           type: integer
           minimum: 0
+          description: Approved 与 Ordered Purchase Lists 总数。
         itemsRemaining:
           type: integer
           minimum: 0
-          description: 所有 Active Purchase Lists 中 remainingQuantity > 0 的有效 Purchase List Item 行数。
-        readyToComplete:
+          description: 所有 Approved/Ordered Lists 中 `remainingQuantity > 0` 的 Purchase List Item 行数。
+        varianceFreeOrderedLists:
           type: integer
           minimum: 0
-          description: 至少包含一个有效 Item 且 progressStatus=all_received 的 Active Purchase List 数量。
+          description: 所有 items 均 exact-received、可无需 variance confirmation 完成的 Ordered List 数量。
         recentLists:
           type: array
           maxItems: 4
-          description: 最近更新的 Active Purchase Lists，按 updatedAt DESC、id DESC 排序。
+          description: 最近更新的 Approved/Ordered Lists，按 updatedAt DESC、id DESC 排序。
           items:
             $ref: '#/components/schemas/PurchaseListSummary'
     Dashboard:
@@ -4196,9 +4060,9 @@ components:
           lowStock: []
           expiringSoon: []
         purchaseListOverview:
-          activeLists: 4
+          openLists: 4
           itemsRemaining: 11
-          readyToComplete: 1
+          varianceFreeOrderedLists: 1
           recentLists: []
         asOf: '2026-08-12T11:30:45-04:00'
     CategoryUsageTrend:
@@ -4513,10 +4377,11 @@ components:
               percentage: *id014
     ForecastPurchaseListReference:
       type: object
-      description: 该 Buying Need 对应商品所在的一个 Active Purchase List，以及该商品在该 List 中的收货状态。
+      description: 该 Buying Need 对应商品所在的一个 Approved 或 Ordered Purchase List，以及该商品在该 List 中的收货状态。
       required:
       - id
       - name
+      - status
       - receiptStatus
       properties:
         id:
@@ -4526,12 +4391,16 @@ components:
         name:
           type: string
           description: Purchase List Name。
+        status:
+          type: string
+          enum: [approved, ordered]
         receiptStatus:
           type: string
           enum:
-          - pending
+          - not_received
           - partially_received
           - received
+          - over_received
           description: 当前 Forecast Item 在该 Purchase List 中的收货状态。
     ForecastDataSufficiency:
       type: object
@@ -4573,7 +4442,7 @@ components:
       - predictedRunoutDate
       - recommendedQuantity
       - orderByDate
-      - activePurchaseLists
+      - purchaseLists
       - dataSufficiency
       properties:
         inventoryItemId:
@@ -4615,9 +4484,9 @@ components:
           - 'null'
           format: date
           description: 建议下单日期，通常为预计达到 Minimum Quantity 日期前 7 天；无法预测时为 null。
-        activePurchaseLists:
+        purchaseLists:
           type: array
-          description: 该 Inventory Item 所在的全部 Active Purchase Lists；不在任何 Active List 时返回空数组。
+          description: 该 Inventory Item 所在的全部 Approved/Ordered Purchase Lists；没有未关闭 List 时返回空数组。
           items:
             $ref: '#/components/schemas/ForecastPurchaseListReference'
         dataSufficiency:
@@ -4811,9 +4680,10 @@ components:
             predictedRunoutDate: '2026-09-03'
             recommendedQuantity: '13.00'
             orderByDate: '2026-08-20'
-            activePurchaseLists:
+            purchaseLists:
             - id: 45c2cd56-3ee2-48b4-986a-51792970a67e
               name: August Restock
+              status: ordered
               receiptStatus: partially_received
             dataSufficiency:
               status: sufficient
@@ -4831,7 +4701,7 @@ components:
             predictedRunoutDate: '2026-09-22'
             recommendedQuantity: '8.00'
             orderByDate: '2026-09-08'
-            activePurchaseLists: []
+            purchaseLists: []
             dataSufficiency:
               status: sufficient
               completeWeeks: 10
