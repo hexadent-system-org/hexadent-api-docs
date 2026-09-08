@@ -1210,6 +1210,7 @@ paths:
       - name: vendor
         in: query
         schema: {type: string, maxLength: 160}
+        description: 自由文本筛选。服务端对查询值与 Draft item 的非 null Vendor 值执行相同的 Unicode NFKC、连续空白折叠、trim 和大小写归一化，再做包含匹配；省略或规范化后为空表示不过滤，非空查询不匹配 null Vendor。
       - *id003
       - *id004
       responses:
@@ -1225,7 +1226,7 @@ paths:
       tags: [Purchase Lists]
       operationId: addPurchaseDraftItems
       summary: 批量加入 shared Purchase Draft
-      description: 所有 active Member 可写。请求全有或全无；每个 Inventory Item 在 Draft 最多一行。已存在项不会累加，成功响应返回其当前 item 与 version。同一请求重复 `inventoryItemId`（即使其他字段不同）返回 `REQUEST_VALIDATION_ERROR` 422，整批不写入。
+      description: 所有 active Member 可写。每次请求最多 100 items，超过上限返回 `REQUEST_VALIDATION_ERROR` 422；请求全有或全无，任何 422 都不写入。每个 Inventory Item 在 Draft 最多一行。已存在项不会累加，成功响应返回其当前 item 与 version。同一请求重复 `inventoryItemId`（即使其他字段不同）返回 `REQUEST_VALIDATION_ERROR` 422，整批不写入。
       parameters: [*id006]
       requestBody:
         required: true
@@ -1256,13 +1257,13 @@ paths:
         '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '404': {description: Inventory Item 在当前 Organization 下不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '409': {description: 幂等 key 与 material payload 冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
-        '422': {description: 任一条目无效；整批不写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 请求超过 100 items、包含重复 Inventory Item，或任一条目无效；返回 `REQUEST_VALIDATION_ERROR` 且整批不写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-draft/items/{draftItemId}:
     patch:
       tags: [Purchase Lists]
       operationId: updatePurchaseDraftItem
       summary: 更新 shared Draft item
-      description: '`plannedQuantity` 是保存后的最终 total，不是 delta；未提供的可选字段保持不变，显式 null 清空可空字段。'
+      description: '`plannedQuantity` 是保存后的最终 total，不是 delta；未提供的可选字段保持不变，显式 null 清空可空字段。首次执行新的幂等请求时先校验 `expectedVersion`；stale version 即使提交值与当前值相同也返回 `PURCHASE_DRAFT_VERSION_CONFLICT`。只有当前 version 且提交值与当前持久化值相同时返回当前 item，`version` 和 `updatedAt` 不变；该 200 no-op 会完成幂等记录。已完成的相同 key 与 material payload 重试回放原结果。'
       parameters:
       - &id007
         name: draftItemId
@@ -3517,6 +3518,7 @@ components:
         items:
           type: array
           minItems: 1
+          maxItems: 100
           items: {$ref: '#/components/schemas/PurchaseDraftItemInput'}
     PurchaseDraftBulkAddResult:
       type: object
