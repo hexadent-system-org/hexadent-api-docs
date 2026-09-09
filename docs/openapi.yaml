@@ -1206,7 +1206,7 @@ paths:
       - name: keyword
         in: query
         schema: {type: string, maxLength: 300}
-        description: 按 Product Name、Brand、Manufacturer、MFG Number 或 Barcode 搜索。
+        description: 仅按 Product Name 做不区分大小写的包含搜索。Brand、Manufacturer、MFG Number 和 Barcode 不参与该 keyword 搜索；Vendor 仅通过独立的 `vendor` 参数筛选。
       - name: vendor
         in: query
         schema: {type: string, maxLength: 160}
@@ -1307,7 +1307,7 @@ paths:
       tags: [Purchase Lists]
       operationId: listPurchaseLists
       summary: 查询 Purchase Lists
-      description: 所有 active Member 可读。Cancelled 不出现在 MVP 列表。`keyword` 先做 Unicode NFKC、连续空白折叠和大小写归一化，再对 List name/notes 与 item snapshot 的 productName、brandName、vendor、vendorItemNumber 做包含匹配；任一字段匹配即返回该 List。默认按 `updatedAt DESC, id DESC` 稳定排序。
+      description: 所有 active Member 可读。Cancelled 不出现在 MVP 列表。`keyword` 先做 Unicode NFKC、连续空白折叠和大小写归一化，再仅对 List name 做包含搜索；notes 和 item snapshot 字段不参与搜索。默认按 `updatedAt DESC, id DESC` 稳定排序。
       parameters:
       - name: status
         in: query
