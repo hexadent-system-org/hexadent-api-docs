@@ -42,7 +42,7 @@ API 负责提供面向用户的英文错误提示。客户端不得解析 `messa
 | `ACCOUNT_SELECTION_REQUIRED` | 409 | Choose an organization to continue. | 打开 Organization Selector。 |
 | `INVENTORY_VERSION_CONFLICT` | 409 | Inventory changed since it was last loaded. Refresh and try again. | 重新获取最新 Inventory Item；用户再次确认后才可使用新的 `version` 重试原操作。 |
 | `PURCHASE_DRAFT_VERSION_CONFLICT` | 409 | The purchase draft changed since it was last loaded. Refresh and try again. | 刷新 shared Draft；不得用旧 `expectedVersion` 自动重试 PATCH、DELETE 或 Approval。 |
-| `PURCHASE_LIST_VERSION_CONFLICT` | 409 | The purchase list changed since it was last loaded. Refresh and try again. | 刷新 List detail；用户再次触发操作时使用新的 List/Item/Inventory version。 |
+| `PURCHASE_LIST_VERSION_CONFLICT` | 409 | The purchase list changed since it was last loaded. Refresh and try again. | 刷新 List detail；用户再次触发操作时使用新的 List/Item version。 |
 | `PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED` | 409 | Review the receiving differences before completing this purchase list. | 从 `details.variance` 展示 zero/short/over summary；只有用户明确确认后才以新的 Idempotency-Key 和最新 version 重试。 |
 | `INVENTORY_PURCHASE_LIST_BLOCKED` | 409 | This item is still used by a purchase draft or open purchase list. | 展示 `details.blockers`，提供 Draft/List 入口并禁止移除 Inventory Item。 |
 | `REQUEST_VALIDATION_ERROR` | 422 | Please check the highlighted fields and try again. | 将 `fieldErrors` 映射到对应表单控件；无法映射的错误显示在表单级错误区域。 |
