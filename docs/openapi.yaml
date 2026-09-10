@@ -1452,7 +1452,7 @@ paths:
       tags: [Purchase Lists]
       operationId: receivePurchaseListItem
       summary: 记录 Ordered item 的一次收货
-      description: 所有 active Member 可执行。`quantityReceived` 必须大于 0、最多两位小数；允许 over-receipt。单一事务更新 Inventory 与 List Item，写入不可变 event 和 Inventory Activity。over-receipt 以成功响应中的结构化 warning 表达。
+      description: 所有 active Member 可执行。`quantityReceived` 必须大于 0、最多两位小数且不超过 `999999.99`；允许 over-receipt。单一事务更新 Inventory 与 List Item，写入不可变 event 和 Inventory Activity。变更后的 Inventory `quantityOnHand` 不得超出 Inventory 支持范围。over-receipt 以成功响应中的结构化 warning 表达。
       parameters:
       - &id009
         name: itemId
@@ -1468,15 +1468,15 @@ paths:
         '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '404': {description: 当前 Organization 下 item 不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
-        '409': {description: List state、item/inventory version 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
-        '422': {description: quantity、date 或 request field 未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List state、item version 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: quantity、变更后的 Inventory quantity、date 或 request field 未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '503': {description: Inventory Activity dependency 暂不可用且事务未写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-list-items/{itemId}/receipt-corrections:
     post:
       tags: [Purchase Lists]
       operationId: correctPurchaseListItemReceiptTotal
       summary: 设定 Ordered item 的累计实收总数
-      description: 所有 active Member 可执行。服务端锁定记录后以 `totalReceived - currentTotal` 计算 delta；total 可为 0。相同 total 是 no-op，不创建 event/Activity，也不增加任何 version。非零 delta 原子调整 Inventory；不得令 total 或 Inventory quantity 小于 0。
+      description: 所有 active Member 可执行。服务端锁定记录后以 `totalReceived - currentTotal` 计算 delta；total 可为 0，但不得超过 `999999.99`。相同 total 是 no-op，不创建 event/Activity，也不增加任何 version。非零 delta 原子调整 Inventory；变更后的 Inventory `quantityOnHand` 不得小于 0 或超出 Inventory 支持范围。
       parameters: [*id009, *id006]
       requestBody:
         required: true
@@ -1486,8 +1486,8 @@ paths:
         '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '404': {description: 当前 Organization 下 item 不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
-        '409': {description: List state、item/inventory version、negative inventory 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
-        '422': {description: total、date 或 request field 未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List state、item version、negative inventory 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: total、变更后的 Inventory quantity、date 或 request field 未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '503': {description: Inventory Activity dependency 暂不可用且事务未写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /dashboard:
     get:
@@ -3549,6 +3549,11 @@ components:
       pattern: ^(?:0\.(?:0[1-9]|[1-9]\d?)|[1-9]\d{0,5}(?:\.\d{1,2})?)$
       examples: ['0.01', '12.50', '999999.99']
       description: 大于零且不超过 999999.99 的数量；最多两位小数。
+    PurchaseReceivedQuantityInput:
+      type: string
+      pattern: ^(?:0|[1-9]\d{0,5})(?:\.\d{1,2})?$
+      examples: ['0', '12.50', '999999.99']
+      description: 大于等于零且不超过 999999.99 的累计实收数量；最多两位小数。
     PurchaseListItem:
       type: object
       required: [id, inventoryItemId, productName, brandName, specification, unitName, plannedQuantity, receivedQuantity, remainingQuantity, varianceQuantity, receiptStatus, vendor, vendorItemNumber, unitPrice, notes, version]
@@ -3723,23 +3728,21 @@ components:
     PurchaseReceiptRequest:
       type: object
       additionalProperties: false
-      required: [quantityReceived, expectedListVersion, expectedItemVersion, expectedInventoryVersion]
+      required: [quantityReceived, expectedListVersion, expectedItemVersion]
       properties:
-        quantityReceived: *id015
+        quantityReceived: {$ref: '#/components/schemas/PurchaseQuantityInput'}
         expectedListVersion: {type: integer, minimum: 1}
         expectedItemVersion: {type: integer, minimum: 1}
-        expectedInventoryVersion: {type: integer, minimum: 1}
         vendorReceiptNumber: {type: [string, 'null'], maxLength: 160}
         receivedAt: {type: [string, 'null'], format: date-time}
     PurchaseReceiptCorrectionRequest:
       type: object
       additionalProperties: false
-      required: [totalReceived, expectedListVersion, expectedItemVersion, expectedInventoryVersion]
+      required: [totalReceived, expectedListVersion, expectedItemVersion]
       properties:
-        totalReceived: *id014
+        totalReceived: {$ref: '#/components/schemas/PurchaseReceivedQuantityInput'}
         expectedListVersion: {type: integer, minimum: 1}
         expectedItemVersion: {type: integer, minimum: 1}
-        expectedInventoryVersion: {type: integer, minimum: 1}
         reason: {type: string, minLength: 1, maxLength: 1000}
         correctedAt: {type: [string, 'null'], format: date-time}
     PurchaseReceiptEvent:
