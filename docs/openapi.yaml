@@ -1226,7 +1226,7 @@ paths:
       tags: [Purchase Lists]
       operationId: addPurchaseDraftItems
       summary: 批量加入 shared Purchase Draft
-      description: 所有 active Member 可写。每次请求最多 100 items，超过上限返回 `REQUEST_VALIDATION_ERROR` 422；请求全有或全无，任何 422 都不写入。每个 Inventory Item 在 Draft 最多一行。已存在项不会累加，成功响应返回其当前 item 与 version。同一请求重复 `inventoryItemId`（即使其他字段不同）返回 `REQUEST_VALIDATION_ERROR` 422，整批不写入。
+      description: 所有 active Member 可写。每次请求最多 100 items；每个 `plannedQuantity` 最大为 `999999.99`。超过上限返回 `REQUEST_VALIDATION_ERROR` 422；请求全有或全无，任何 422 都不写入。每个 Inventory Item 在 Draft 最多一行。已存在项不会累加，成功响应返回其当前 item 与 version。同一请求重复 `inventoryItemId`（即使其他字段不同）返回 `REQUEST_VALIDATION_ERROR` 422，整批不写入。
       parameters: [*id006]
       requestBody:
         required: true
@@ -1263,7 +1263,7 @@ paths:
       tags: [Purchase Lists]
       operationId: updatePurchaseDraftItem
       summary: 更新 shared Draft item
-      description: '`plannedQuantity` 是保存后的最终 total，不是 delta；未提供的可选字段保持不变，显式 null 清空可空字段。首次执行新的幂等请求时先校验 `expectedVersion`；stale version 即使提交值与当前值相同也返回 `PURCHASE_DRAFT_VERSION_CONFLICT`。只有当前 version 且提交值与当前持久化值相同时返回当前 item，`version` 和 `updatedAt` 不变；该 200 no-op 会完成幂等记录。已完成的相同 key 与 material payload 重试回放原结果。'
+      description: '`plannedQuantity` 是保存后的最终 total，不是 delta，最大为 `999999.99`；未提供的可选字段保持不变，显式 null 清空可空字段。首次执行新的幂等请求时先校验 `expectedVersion`；stale version 即使提交值与当前值相同也返回 `PURCHASE_DRAFT_VERSION_CONFLICT`。只有当前 version 且提交值与当前持久化值相同时返回当前 item，`version` 和 `updatedAt` 不变；该 200 no-op 会完成幂等记录。已完成的相同 key 与 material payload 重试回放原结果。'
       parameters:
       - &id007
         name: draftItemId
@@ -1386,7 +1386,7 @@ paths:
       tags: [Purchase Lists]
       operationId: cancelPurchaseList
       summary: 取消未收货的 Approved List
-      description: 所有 active Member 可执行。仅 Approved 且没有 receipt history 时允许；保留 Cancelled snapshot，并在同一事务把 planned quantities 恢复到 shared Draft。若 Inventory Item 已有 Draft row，只累加 plannedQuantity 并保留该 row 当前的 vendor、vendorItemNumber、unitPrice 和 notes；若没有，则从 Cancelled item snapshot 初始化这些 metadata。任一失败均不产生部分写入。
+      description: 所有 active Member 可执行。仅 Approved 且没有 receipt history 时允许；保留 Cancelled snapshot，并在同一事务把 planned quantities 恢复到 shared Draft。若 Inventory Item 已有 Draft row，只累加 plannedQuantity 并保留该 row 当前的 vendor、vendorItemNumber、unitPrice 和 notes；合计超过 `999999.99` 时返回 409，用户需先减少当前 Draft quantity。若没有 Draft row，则从 Cancelled item snapshot 初始化 metadata；为了兼容上限生效前的不可变历史 snapshot，此恢复可保留超过当前输入上限的旧值，用户之后只能将其修改到 `999999.99` 以内。任一失败均不产生部分写入。
       parameters: [*id008, *id006]
       requestBody:
         required: true
@@ -3505,7 +3505,7 @@ components:
       required: [inventoryItemId, plannedQuantity]
       properties:
         inventoryItemId: *id001
-        plannedQuantity: *id015
+        plannedQuantity: {$ref: '#/components/schemas/PurchaseQuantityInput'}
         vendor: {type: [string, 'null'], maxLength: 160}
         vendorItemNumber: {type: [string, 'null'], maxLength: 160}
         unitPrice: {anyOf: [*id014, {type: 'null'}]}
@@ -3539,11 +3539,16 @@ components:
       required: [expectedVersion]
       properties:
         expectedVersion: {type: integer, minimum: 1}
-        plannedQuantity: *id015
+        plannedQuantity: {$ref: '#/components/schemas/PurchaseQuantityInput'}
         vendor: {type: [string, 'null'], maxLength: 160}
         vendorItemNumber: {type: [string, 'null'], maxLength: 160}
         unitPrice: {anyOf: [*id014, {type: 'null'}]}
         notes: {type: [string, 'null'], maxLength: 2000}
+    PurchaseQuantityInput:
+      type: string
+      pattern: ^(?:0\.(?:0[1-9]|[1-9]\d?)|[1-9]\d{0,5}(?:\.\d{1,2})?)$
+      examples: ['0.01', '12.50', '999999.99']
+      description: 大于零且不超过 999999.99 的数量；最多两位小数。
     PurchaseListItem:
       type: object
       required: [id, inventoryItemId, productName, brandName, specification, unitName, plannedQuantity, receivedQuantity, remainingQuantity, varianceQuantity, receiptStatus, vendor, vendorItemNumber, unitPrice, notes, version]
