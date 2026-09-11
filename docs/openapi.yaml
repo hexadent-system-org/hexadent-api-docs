@@ -1423,7 +1423,7 @@ paths:
       tags: [Purchase Lists]
       operationId: exportPurchaseList
       summary: 导出 Purchase List snapshot
-      description: 所有 active Member 仅可导出 Approved List，最多 1,000 items；Ordered、Completed 和 Cancelled 均不可导出。CSV 是 UTF-8、RFC 4180 的单一 header + data rows 表格，List name 只通过下载文件名表达，不添加 metadata preamble。CSV header 与 PDF item table 固定为 Vendor Item Number、Vendor、Description、Unit、Qty、Unit Price、Total Price；Description 是 Product Name snapshot，Qty 是 planned quantity，Total Price 使用 Decimal 精确计算为 Qty × Unit Price，Unit Price 为空时 Total Price 也为空。PDF header 固定为 List name、actual approver、approved at 和 notes，并为长内容分页、换行和重复 item table header。响应必须设置正确 Content-Type，并使用 `filename` ASCII fallback 与 RFC 5987 `filename*` UTF-8 编码支持 Unicode List name。
+      description: 所有 active Member 仅可导出 Approved List，最多 1,000 items；Ordered、Completed 和 Cancelled 均不可导出，并返回说明仅 Approved 可导出的 409。CSV 是带 BOM 的 UTF-8、RFC 4180 单一 header + data rows 表格，List name 只通过下载文件名表达，不添加 metadata preamble；为防止 spreadsheet formula injection，Vendor Item Number、Vendor、Description、Unit 中忽略前导空白及 Unicode control/format 字符后以 `=`、`+`、`-`、`@` 开头的值会添加 apostrophe 安全前缀，机器消费者应以 `utf-8-sig` 解码并保留该转换。CSV header 与 PDF item table 固定为 Vendor Item Number、Vendor、Description、Unit、Qty、Unit Price、Total Price；Description 是 Product Name snapshot，Qty 是 planned quantity，Total Price 使用 Decimal 精确计算为 Qty × Unit Price，Unit Price 为空时 Total Price 也为空。PDF header 固定为 List name、actual approver、approved at 和 notes，并为长内容分页、换行和重复 item table header。若 snapshot 含当前 PDF 字体无法呈现的字符，PDF 返回非重试型 422 并提示改用 CSV；其他文件生成依赖失败仍返回安全、可重试的 503。响应必须设置正确 Content-Type，并使用 `filename` ASCII fallback 与 RFC 5987 `filename*` UTF-8 编码支持 Unicode List name。
       parameters:
       - *id008
       - name: format
@@ -1446,6 +1446,7 @@ paths:
         '404': {description: 当前 Organization 下不存在；跨租户 ID 同样返回 404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '409': {description: Ordered、Completed 或 Cancelled List 不允许导出, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '413': {description: 'List 超过 1,000 items', content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: format 未通过校验，或 PDF snapshot 含当前字体无法呈现的字符（`PDF_EXPORT_UNSUPPORTED_CHARACTERS`，可改用 CSV）, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '503': {description: 文件生成依赖暂不可用, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-list-items/{itemId}/receipts:
     post:
