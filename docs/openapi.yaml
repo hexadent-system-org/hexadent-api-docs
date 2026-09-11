@@ -1423,7 +1423,7 @@ paths:
       tags: [Purchase Lists]
       operationId: exportPurchaseList
       summary: 导出 Purchase List snapshot
-      description: 所有 active Member 可导出 Approved、Ordered 或 Completed List，最多 1,000 items。CSV 使用 UTF-8、RFC 4180 escaping；PDF 重复表头并分页。列为 Product、Brand、Specification、Unit、Planned、Received、Variance、Receipt Status、Vendor、Vendor Item Number、Unit Price、Notes。响应必须设置正确 Content-Type，并使用 `filename` ASCII fallback 与 RFC 5987 `filename*` UTF-8 编码支持 Unicode 名称。
+      description: 所有 active Member 仅可导出 Approved List，最多 1,000 items；Ordered、Completed 和 Cancelled 均不可导出。CSV 是 UTF-8、RFC 4180 的单一 header + data rows 表格，List name 只通过下载文件名表达，不添加 metadata preamble。CSV header 与 PDF item table 固定为 Vendor Item Number、Vendor、Description、Unit、Qty、Unit Price、Total Price；Description 是 Product Name snapshot，Qty 是 planned quantity，Total Price 使用 Decimal 精确计算为 Qty × Unit Price，Unit Price 为空时 Total Price 也为空。PDF header 固定为 List name、actual approver、approved at 和 notes，并为长内容分页、换行和重复 item table header。响应必须设置正确 Content-Type，并使用 `filename` ASCII fallback 与 RFC 5987 `filename*` UTF-8 编码支持 Unicode List name。
       parameters:
       - *id008
       - name: format
@@ -1432,19 +1432,19 @@ paths:
         schema: {type: string, enum: [csv, pdf]}
       responses:
         '200':
-          description: CSV 或 PDF 文件流，包含 Content-Disposition attachment header
+          description: Approved Purchase List 的 CSV 或 PDF 文件流，包含 Content-Disposition attachment header
           headers:
             Content-Disposition:
               required: true
               schema: {type: string}
-              example: attachment; filename="purchase-list.csv"; filename*=UTF-8''September%20Order.csv
+              example: attachment; filename="purchase-list-0195a9f0-7c1a-7a2b-8c3d-4e5f60718293.csv"; filename*=UTF-8''September%20Order.csv
           content:
             text/csv: {schema: {type: string, format: binary}}
             application/pdf: {schema: {type: string, format: binary}}
         '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '403': {description: Membership 或 Organization 不允许导出, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '404': {description: 当前 Organization 下不存在；跨租户 ID 同样返回 404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
-        '409': {description: List state 不允许导出, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: Ordered、Completed 或 Cancelled List 不允许导出, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '413': {description: 'List 超过 1,000 items', content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '503': {description: 文件生成依赖暂不可用, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-list-items/{itemId}/receipts:
