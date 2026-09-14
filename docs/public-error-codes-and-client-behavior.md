@@ -142,3 +142,16 @@ function handleApiError(error: ApiError) {
 ```
 
 以上代码仅用于说明处理规则。Web、iOS 和 Android 可以根据各自的导航及状态管理架构调整具体实现，但必须保持本文档定义的行为一致。
+
+## Notification 定位与提示（2026-09-14）
+
+`GET /notifications/{notificationId}/location` 的 `status` 是正常业务结果，不是错误文案：
+
+| 结果 | 英文文案 / 中文含义 | 客户端行为 |
+|---|---|---|
+| 200 visible | 无 Toast | 加载并定位目标；earlier 自动展开；成功定位后调用 read |
+| 200 not_in_list | This notification is no longer in your list. / 该通知已不在通知列表中 | 不展示隐藏详情、不恢复 Dismiss，保留通知列表 |
+| 404 NOTIFICATION_UNAVAILABLE | This notification is unavailable. / 该通知不可用 | 未知、清理及无权访问统一提示，不泄露资源存在性 |
+| 网络/5xx | Couldn't load the notification. Please try again. / 通知加载失败，请重试 | 保留目标供重试，不当作不存在 |
+
+本流程客户端按稳定 status/error.code 映射上述文案；不解析 message。未登录按既有登录恢复流程处理。Resolved 不造成定位失败；inventoryItemAvailable=false 仅禁用商品导航，尝试时提示 This inventory item has been deleted. / 该库存项已删除。空列表文案 No new notifications / 暂无新通知。
