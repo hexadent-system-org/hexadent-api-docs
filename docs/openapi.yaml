@@ -41,6 +41,7 @@ tags:
 - name: Inventory - Imports
 - name: Purchase Lists
 - name: Dashboard
+  description: 4 个独立只读模块；2026-09-23 确认的 contract-first replacement，运行时由后续任务实现。详见 dashboard-contract.md。
 - name: Analytics
 - name: Notifications
 paths:
@@ -1490,77 +1491,524 @@ paths:
         '409': {description: List state、item version、negative inventory 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '422': {description: total、变更后的 Inventory quantity、date 或 request field 未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '503': {description: Inventory Activity dependency 暂不可用且事务未写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
-  /dashboard:
+  /dashboard/inventory-summary:
     get:
       tags:
       - Dashboard
-      operationId: getDashboard
-      summary: 获取 Dashboard 固定首屏数据
+      operationId: getDashboardInventorySummary
+      summary: 获取库存统计及关注列表
+      description: 无 query 参数。四个库存计数和 All/Low Stock/Out of Stock/Expiring Soon 关注列表一起返回，不从 Inventory 已加载分页推断计数。 所有 active Member
+        可读；组织由认证账户上下文确定，不接受 organizationId 覆盖，所有源记录和关联均限当前组织。四个模块独立读取和重试；本合同为待实现目标，不表示运行时已上线。
       responses:
         '200':
-          description: Dashboard 固定首屏数据
+          description: 获取库存统计及关注列表
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Dashboard'
+                $ref: '#/components/schemas/DashboardInventorySummary'
+              examples:
+                boundaries:
+                  summary: 当地 0/30/31 天、过期低库存、状态重叠与 All 去重；第 4 条普通库存不出现在关注列表
+                  value:
+                    timezone: America/Toronto
+                    asOf: '2026-09-23T12:00:00-04:00'
+                    summary:
+                      totalItems: 4
+                      lowStockItems: 2
+                      outOfStockItems: 1
+                      expiringSoonItems: 2
+                    attentionItems:
+                      counts:
+                        all: 3
+                        lowStock: 2
+                        outOfStock: 1
+                        expiringSoon: 2
+                      all:
+                      - inventoryItemId: 00000000-0000-4000-8000-000000000001
+                        productName: A Gauze
+                        category:
+                          id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+                          name: Disposables
+                          slug: disposables
+                        quantityOnHand: '2.00'
+                        unitName: Box
+                        lowStockThreshold: '5.00'
+                        inventoryStatus: low_stock
+                        expiryDate: '2026-09-22'
+                        expiryStatus: expired
+                        daysUntilExpiry: -1
+                      - inventoryItemId: 00000000-0000-4000-8000-000000000002
+                        productName: B Gloves
+                        category:
+                          id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+                          name: Disposables
+                          slug: disposables
+                        quantityOnHand: '3.00'
+                        unitName: Box
+                        lowStockThreshold: '5.00'
+                        inventoryStatus: low_stock
+                        expiryDate: '2026-09-23'
+                        expiryStatus: expiring_soon
+                        daysUntilExpiry: 0
+                      - inventoryItemId: 00000000-0000-4000-8000-000000000003
+                        productName: C Masks
+                        category:
+                          id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+                          name: Disposables
+                          slug: disposables
+                        quantityOnHand: '0.00'
+                        unitName: Box
+                        lowStockThreshold: '5.00'
+                        inventoryStatus: out_of_stock
+                        expiryDate: '2026-10-23'
+                        expiryStatus: expiring_soon
+                        daysUntilExpiry: 30
+                      lowStock:
+                      - inventoryItemId: 00000000-0000-4000-8000-000000000001
+                        productName: A Gauze
+                        category:
+                          id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+                          name: Disposables
+                          slug: disposables
+                        quantityOnHand: '2.00'
+                        unitName: Box
+                        lowStockThreshold: '5.00'
+                        inventoryStatus: low_stock
+                        expiryDate: '2026-09-22'
+                        expiryStatus: expired
+                        daysUntilExpiry: -1
+                      - inventoryItemId: 00000000-0000-4000-8000-000000000002
+                        productName: B Gloves
+                        category:
+                          id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+                          name: Disposables
+                          slug: disposables
+                        quantityOnHand: '3.00'
+                        unitName: Box
+                        lowStockThreshold: '5.00'
+                        inventoryStatus: low_stock
+                        expiryDate: '2026-09-23'
+                        expiryStatus: expiring_soon
+                        daysUntilExpiry: 0
+                      outOfStock:
+                      - inventoryItemId: 00000000-0000-4000-8000-000000000003
+                        productName: C Masks
+                        category:
+                          id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+                          name: Disposables
+                          slug: disposables
+                        quantityOnHand: '0.00'
+                        unitName: Box
+                        lowStockThreshold: '5.00'
+                        inventoryStatus: out_of_stock
+                        expiryDate: '2026-10-23'
+                        expiryStatus: expiring_soon
+                        daysUntilExpiry: 30
+                      expiringSoon:
+                      - inventoryItemId: 00000000-0000-4000-8000-000000000002
+                        productName: B Gloves
+                        category:
+                          id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+                          name: Disposables
+                          slug: disposables
+                        quantityOnHand: '3.00'
+                        unitName: Box
+                        lowStockThreshold: '5.00'
+                        inventoryStatus: low_stock
+                        expiryDate: '2026-09-23'
+                        expiryStatus: expiring_soon
+                        daysUntilExpiry: 0
+                      - inventoryItemId: 00000000-0000-4000-8000-000000000003
+                        productName: C Masks
+                        category:
+                          id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+                          name: Disposables
+                          slug: disposables
+                        quantityOnHand: '0.00'
+                        unitName: Box
+                        lowStockThreshold: '5.00'
+                        inventoryStatus: out_of_stock
+                        expiryDate: '2026-10-23'
+                        expiryStatus: expiring_soon
+                        daysUntilExpiry: 30
+                empty:
+                  summary: 空组织正常返回 200、零计数和空数组
+                  value:
+                    timezone: America/Toronto
+                    asOf: '2026-09-23T12:00:00-04:00'
+                    summary:
+                      totalItems: 0
+                      lowStockItems: 0
+                      outOfStockItems: 0
+                      expiringSoonItems: 0
+                    attentionItems:
+                      counts:
+                        all: 0
+                        lowStock: 0
+                        outOfStock: 0
+                        expiringSoon: 0
+                      all: []
+                      lowStock: []
+                      outOfStock: []
+                      expiringSoon: []
         '401':
-          description: Access Token 缺失、无效或已过期
+          description: Access Token 缺失、无效或已过期。
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
+          description: 当前 Membership/Organization 状态不允许访问。
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: 无 Query 参数。一次返回 Summary、Inventory Items by Category、最近 30 天 Top Used Products、三组最多 5 条的 Attention Items，以及
-        Purchase List Overview；Usage Trend 由独立接口加载。Category 聚合返回全部真实类别，客户端展示前 5 项并将其余项合并为 Other。
-  /dashboard/usage-trend:
-    get:
-      tags:
-      - Dashboard
-      operationId: getDashboardUsageTrend
-      summary: 获取按 Category 分组的 Usage Trend
-      responses:
-        '200':
-          description: Usage Trend
+        '503':
+          description: 依赖或统计读取暂不可用，返回 SERVICE_UNAVAILABLE；不得伪装为空数据或零计数。
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CategoryUsageTrend'
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /dashboard/purchase-list-overview:
+    get:
+      tags:
+      - Dashboard
+      operationId: getDashboardPurchaseListOverview
+      summary: 获取采购概览计数和三组清单
+      description: 完整计数和各状态截断列表一起返回；limit 对每组单独生效，无分页或排序参数。 所有 active Member 可读；组织由认证账户上下文确定，不接受 organizationId 覆盖，所有源记录和关联均限当前组织。四个模块独立读取和重试；本合同为待实现目标，不表示运行时已上线。
+      responses:
+        '200':
+          description: 获取采购概览计数和三组清单
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardPurchaseListOverview'
+              examples:
+                emptyLists:
+                  summary: 共享 Draft 有两行但没有清单
+                  value:
+                    timezone: America/Toronto
+                    asOf: '2026-09-23T12:00:00-04:00'
+                    limit: 3
+                    weekStartDate: '2026-09-21'
+                    counts:
+                      draftItems: 2
+                      approvedLists: 0
+                      orderedLists: 0
+                      completedThisWeek: 0
+                    lists:
+                      approved: []
+                      ordered: []
+                      completedThisWeek: []
+                limited:
+                  summary: limit=1 不影响总数；8 月创建的清单在本周一完成仍计入本周
+                  value:
+                    timezone: America/Toronto
+                    asOf: '2026-09-23T12:00:00-04:00'
+                    limit: 1
+                    weekStartDate: '2026-09-21'
+                    counts:
+                      draftItems: 7
+                      approvedLists: 2
+                      orderedLists: 4
+                      completedThisWeek: 2
+                    lists:
+                      approved:
+                      - id: 00000000-0000-4000-8000-000000000020
+                        name: Clinic order 20
+                        status: approved
+                        itemCount: 2
+                        receiptCounts:
+                          notReceived: 2
+                          partiallyReceived: 0
+                          received: 0
+                          overReceived: 0
+                        version: 3
+                        approvedBy:
+                          membershipId: 00000000-0000-4000-8000-000000000099
+                          displayName: Wen Qi
+                          role: admin
+                        selectedApprover:
+                          membershipId: 00000000-0000-4000-8000-000000000099
+                          displayName: Wen Qi
+                          role: admin
+                        approvedAt: '2026-09-22T10:00:00-04:00'
+                        orderedBy: null
+                        orderedAt: null
+                        completedBy: null
+                        completedAt: null
+                        cancelledBy: null
+                        cancelledAt: null
+                        createdAt: '2026-09-22T10:00:00-04:00'
+                        updatedAt: '2026-09-22T10:00:00-04:00'
+                      ordered:
+                      - id: 00000000-0000-4000-8000-000000000021
+                        name: Clinic order 21
+                        status: ordered
+                        itemCount: 2
+                        receiptCounts:
+                          notReceived: 1
+                          partiallyReceived: 1
+                          received: 0
+                          overReceived: 0
+                        version: 3
+                        approvedBy:
+                          membershipId: 00000000-0000-4000-8000-000000000099
+                          displayName: Wen Qi
+                          role: admin
+                        selectedApprover:
+                          membershipId: 00000000-0000-4000-8000-000000000099
+                          displayName: Wen Qi
+                          role: admin
+                        approvedAt: '2026-09-22T11:00:00-04:00'
+                        orderedBy:
+                          membershipId: 00000000-0000-4000-8000-000000000099
+                          displayName: Wen Qi
+                          role: admin
+                        orderedAt: '2026-09-22T11:00:00-04:00'
+                        completedBy: null
+                        completedAt: null
+                        cancelledBy: null
+                        cancelledAt: null
+                        createdAt: '2026-09-22T11:00:00-04:00'
+                        updatedAt: '2026-09-22T11:00:00-04:00'
+                      completedThisWeek:
+                      - id: 00000000-0000-4000-8000-000000000022
+                        name: Clinic order 22
+                        status: completed
+                        itemCount: 2
+                        receiptCounts:
+                          notReceived: 1
+                          partiallyReceived: 1
+                          received: 0
+                          overReceived: 0
+                        version: 3
+                        approvedBy:
+                          membershipId: 00000000-0000-4000-8000-000000000099
+                          displayName: Wen Qi
+                          role: admin
+                        selectedApprover:
+                          membershipId: 00000000-0000-4000-8000-000000000099
+                          displayName: Wen Qi
+                          role: admin
+                        approvedAt: '2026-08-01T10:00:00-04:00'
+                        orderedBy:
+                          membershipId: 00000000-0000-4000-8000-000000000099
+                          displayName: Wen Qi
+                          role: admin
+                        orderedAt: '2026-08-01T10:00:00-04:00'
+                        completedBy:
+                          membershipId: 00000000-0000-4000-8000-000000000099
+                          displayName: Wen Qi
+                          role: admin
+                        completedAt: '2026-09-21T00:00:00-04:00'
+                        cancelledBy: null
+                        cancelledAt: null
+                        createdAt: '2026-08-01T10:00:00-04:00'
+                        updatedAt: '2026-09-21T00:00:00-04:00'
         '401':
-          description: Access Token 缺失、无效或已过期
+          description: Access Token 缺失、无效或已过期。
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '403':
-          description: 当前 Membership、Organization 状态或角色不允许操作
+          description: 当前 Membership/Organization 状态不允许访问。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 依赖或统计读取暂不可用，返回 SERVICE_UNAVAILABLE；不得伪装为空数据或零计数。
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '422':
-          description: 字段未通过业务校验
+          description: query 参数格式、类型或取值不合法，返回 REQUEST_VALIDATION_ERROR；不静默截断或回退默认值。
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-      description: 只统计 Inventory Quantity Decrease 中 reasonCode=product_used 的数量，并按 Organization Timezone 的自然月汇总。
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        description: 每个状态列表的条数上限，整数 1–5，默认 3；不影响四个数字。
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 5
+          default: 3
+  /dashboard/top-used-products:
+    get:
+      tags:
+      - Dashboard
+      operationId: getDashboardTopUsedProducts
+      summary: 获取最近 30 天 Top Used Products
+      description: 固定最近 30 个诊所自然日，含今天，无周期或 limit 参数。仅统计 Product Used 实际减少量；历史库存移出不丢弃消耗。 所有 active Member 可读；组织由认证账户上下文确定，不接受 organizationId
+        覆盖，所有源记录和关联均限当前组织。四个模块独立读取和重试；本合同为待实现目标，不表示运行时已上线。
+      responses:
+        '200':
+          description: 获取最近 30 天 Top Used Products
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardTopUsedProducts'
+              examples:
+                usage:
+                  summary: 本期 9、前期 6 为 50%；已移出商品前期 0 返回 null
+                  value:
+                    timezone: America/Toronto
+                    asOf: '2026-09-23T12:00:00-04:00'
+                    period: 30d
+                    fromDate: '2026-08-25'
+                    toDate: '2026-09-23'
+                    previousFromDate: '2026-07-26'
+                    previousToDate: '2026-08-24'
+                    items:
+                    - inventoryItemId: 00000000-0000-4000-8000-000000000002
+                      inventoryItemAvailable: true
+                      productName: B Gloves
+                      category:
+                        id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+                        name: Disposables
+                        slug: disposables
+                      quantityUsed: '9.00'
+                      unitName: Box
+                      trendPercentage: '50.00'
+                    - inventoryItemId: 00000000-0000-4000-8000-000000000004
+                      inventoryItemAvailable: false
+                      productName: D Syringes
+                      category:
+                        id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
+                        name: Disposables
+                        slug: disposables
+                      quantityUsed: '4.00'
+                      unitName: Box
+                      trendPercentage: null
+                empty:
+                  summary: 本期无合格 Product Used 时 items 为空
+                  value:
+                    timezone: America/Toronto
+                    asOf: '2026-09-23T12:00:00-04:00'
+                    period: 30d
+                    fromDate: '2026-08-25'
+                    toDate: '2026-09-23'
+                    previousFromDate: '2026-07-26'
+                    previousToDate: '2026-08-24'
+                    items: []
+        '401':
+          description: Access Token 缺失、无效或已过期。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership/Organization 状态不允许访问。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 依赖或统计读取暂不可用，返回 SERVICE_UNAVAILABLE；不得伪装为空数据或零计数。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /dashboard/purchase-spend:
+    get:
+      tags:
+      - Dashboard
+      operationId: getDashboardPurchaseSpend
+      summary: 获取 Purchase Spend 月度收货价值
+      description: 独立金额趋势接口，替代旧 Dashboard usage-trend 的消耗数量合同。金额为实际收货价值估算，不是付款流水。上线前必须满足 dashboard-contract.md 中的收货纠正关联与历史处理前置条件；不得悄悄忽略无法归属的纠正。
+        所有 active Member 可读；组织由认证账户上下文确定，不接受 organizationId 覆盖，所有源记录和关联均限当前组织。四个模块独立读取和重试；本合同为待实现目标，不表示运行时已上线。
+      responses:
+        '200':
+          description: 获取 Purchase Spend 月度收货价值
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardPurchaseSpend'
+              examples:
+                correctedReceipts:
+                  summary: 8 月误录 8 盒纠正为 6 盒、9 月收到 4 盒，单价 20；归原月为 120/80
+                  value:
+                    timezone: America/Toronto
+                    asOf: '2026-09-23T12:00:00-04:00'
+                    period: last_6_months
+                    fromDate: '2026-04-01'
+                    toDate: '2026-09-23'
+                    currencyCode: CAD
+                    granularity: month
+                    points:
+                    - month: 2026-04
+                      amount: '0.00'
+                    - month: 2026-05
+                      amount: '0.00'
+                    - month: 2026-06
+                      amount: '0.00'
+                    - month: 2026-07
+                      amount: '0.00'
+                    - month: 2026-08
+                      amount: '120.00'
+                    - month: 2026-09
+                      amount: '80.00'
+                empty:
+                  summary: 无收货或全部缺价时仍返回完整零月份；Web 保留固定估算提示
+                  value:
+                    timezone: America/Toronto
+                    asOf: '2026-09-23T12:00:00-04:00'
+                    period: last_6_months
+                    fromDate: '2026-04-01'
+                    toDate: '2026-09-23'
+                    currencyCode: CAD
+                    granularity: month
+                    points:
+                    - month: 2026-04
+                      amount: '0.00'
+                    - month: 2026-05
+                      amount: '0.00'
+                    - month: 2026-06
+                      amount: '0.00'
+                    - month: 2026-07
+                      amount: '0.00'
+                    - month: 2026-08
+                      amount: '0.00'
+                    - month: 2026-09
+                      amount: '0.00'
+        '401':
+          description: Access Token 缺失、无效或已过期。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 当前 Membership/Organization 状态不允许访问。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 依赖或统计读取暂不可用，返回 SERVICE_UNAVAILABLE；不得伪装为空数据或零计数。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: query 参数格式、类型或取值不合法，返回 REQUEST_VALIDATION_ERROR；不静默截断或回退默认值。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
       parameters:
       - name: period
         in: query
         required: false
-        description: 时间范围；不传时为最近 12 个月
+        description: 包含当前未结束月份；省略时最近 6 个月。
         schema:
-          type: string
-          enum:
-          - last_6_months
-          - last_12_months
-          - last_24_months
-          default: last_12_months
+          $ref: '#/components/schemas/DashboardPurchaseSpendPeriod'
   /analytics/overview:
     get:
       tags:
@@ -3881,6 +4329,21 @@ components:
               receivedQuantity: *id014
               varianceQuantity: *id016
               receiptStatus: {type: string, enum: [not_received, partially_received, over_received]}
+    DashboardSnapshot:
+      type: object
+      required:
+      - timezone
+      - asOf
+      properties:
+        timezone:
+          type: string
+          description: 当前 Organization 的 IANA 时区，所有日期边界由服务端按此计算。
+        asOf:
+          type: string
+          format: date-time
+          examples: &id017
+          - '2026-08-12T11:30:45-04:00'
+          description: 同一响应内所有计数、列表及日期使用同一数据库读取快照与截止时刻；必须为 Organization 时区、带 UTC Offset 的 RFC 3339 时间。四个接口可并行请求，各自 asOf 独立，不承诺跨请求原子快照。
     DashboardSummary:
       type: object
       required:
@@ -3892,82 +4355,20 @@ components:
         totalItems:
           type: integer
           minimum: 0
+          description: 当前组织未删除的 Inventory 记录数，含零库存；不是 quantity 合计。
         lowStockItems:
           type: integer
           minimum: 0
+          description: quantityOnHand > 0 且 <= lowStockThreshold 的未删除库存记录数。
         outOfStockItems:
           type: integer
           minimum: 0
+          description: quantityOnHand = 0 的未删除库存记录数；与 lowStockItems 互斥。
         expiringSoonItems:
           type: integer
           minimum: 0
-    InventoryCategoryBreakdown:
-      type: object
-      required:
-      - totalItems
-      - categories
-      properties:
-        totalItems:
-          type: integer
-          minimum: 0
-        categories:
-          type: array
-          description: 返回全部真实 Category，按 count DESC、Category Name ASC 排序；不返回合成的 Other。客户端展示前 5 项，并将其余项合并为 Other。
-          items:
-            type: object
-            required:
-            - category
-            - count
-            - percentage
-            properties:
-              category:
-                $ref: '#/components/schemas/CategoryReference'
-              count:
-                type: integer
-                minimum: 0
-              percentage: *id014
-    DashboardTopUsedProduct:
-      type: object
-      required:
-      - inventoryItemId
-      - inventoryItemAvailable
-      - productName
-      - category
-      - quantityUsed
-      - unitName
-      - trendPercentage
-      properties:
-        inventoryItemId: *id001
-        inventoryItemAvailable:
-          type: boolean
-          description: false 表示该商品已移出当前库存；前端显示历史信息，但不跳转 Inventory Item Details。
-        productName:
-          type: string
-        category:
-          $ref: '#/components/schemas/CategoryReference'
-        quantityUsed: *id014
-        unitName:
-          type: string
-        trendPercentage:
-          anyOf:
-          - *id016
-          - type: 'null'
-          description: 相对前一个 30 天周期的百分比变化；前一周期用量为 0 时返回 null。
-    DashboardTopUsedProducts:
-      type: object
-      required:
-      - period
-      - items
-      properties:
-        period:
-          type: string
-          const: 30d
-          description: MVP 固定统计最近 30 天。
-        items:
-          type: array
-          maxItems: 5
-          items:
-            $ref: '#/components/schemas/DashboardTopUsedProduct'
+          description: expiryDate 在 asOf 的诊所当地日期今天至今天 + 30 天内（含两端）；与数量独立，零库存仍计入。已过期及未设置到期日不计入。
+      description: 全部为当前 Organization 的全量计数，不受关注列表每组 5 条的上限影响。
     DashboardAttentionItem:
       type: object
       required:
@@ -3982,21 +4383,28 @@ components:
       - expiryStatus
       - daysUntilExpiry
       properties:
-        inventoryItemId: *id001
+        inventoryItemId:
+          type: string
+          format: uuid
         productName:
           type: string
         category:
           $ref: '#/components/schemas/CategoryReference'
-        quantityOnHand: *id014
+        quantityOnHand:
+          type: string
+          pattern: ^(0|[1-9]\d*)(\.\d{1,2})?$
         unitName:
           type: string
-        lowStockThreshold: *id014
+        lowStockThreshold:
+          type: string
+          pattern: ^(0|[1-9]\d*)(\.\d{1,2})?$
         inventoryStatus:
           type: string
           enum:
           - in_stock
           - low_stock
           - out_of_stock
+          description: quantity=0 为 out_of_stock；否则 quantity<=threshold 为 low_stock；其余为 in_stock。
         expiryDate:
           type:
           - string
@@ -4009,229 +4417,326 @@ components:
           - normal
           - expiring_soon
           - expired
+          description: 无日期为 not_set；daysUntilExpiry<0 为 expired；0..30 为 expiring_soon；大于 30 为 normal。它与 inventoryStatus 独立；保留 expired
+            数据值，但 Dashboard 不新增 Expired 标签或提醒。
         daysUntilExpiry:
           type:
           - integer
           - 'null'
-          description: 按 Organization Timezone 的本地日期计算；已过期时为负数，未设置 Expiry Date 时为 null。
+          description: expiryDate 减去 asOf 在 Organization 时区的当地日期；过期为负数，无日期为 null。
+      description: 同一条库存可同时显示库存状态与临期状态；库存已删除则不出现在关注列表。productName、category、unitName 为当前库存关联商品的信息。
     DashboardAttentionItems:
       type: object
       required:
-      - outOfStock
+      - counts
+      - all
       - lowStock
+      - outOfStock
       - expiringSoon
       properties:
-        outOfStock:
+        counts:
+          type: object
+          required:
+          - all
+          - lowStock
+          - outOfStock
+          - expiringSoon
+          properties:
+            all:
+              type: integer
+              minimum: 0
+              description: 三个筛选的全量并集，按 inventoryItemId 去重；不是三个计数直接相加。
+            lowStock:
+              type: integer
+              minimum: 0
+              description: 等于 summary.lowStockItems。
+            outOfStock:
+              type: integer
+              minimum: 0
+              description: 等于 summary.outOfStockItems。
+            expiringSoon:
+              type: integer
+              minimum: 0
+              description: 等于 summary.expiringSoonItems。
+        all:
           type: array
           maxItems: 5
           items:
             $ref: '#/components/schemas/DashboardAttentionItem'
+          description: 独立从完整并集排序后取前 5，不可拼接三个已截断列表后生成。Low Stock → Out of Stock → 仅 Expiring Soon；同级 expiryDate ASC（null 最后）、productName
+            ASC、inventoryItemId ASC。
         lowStock:
           type: array
           maxItems: 5
           items:
             $ref: '#/components/schemas/DashboardAttentionItem'
+          description: 仅 low_stock；expiryDate ASC（null 最后）、productName ASC、inventoryItemId ASC。
+        outOfStock:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/DashboardAttentionItem'
+          description: 仅 out_of_stock；expiryDate ASC（null 最后）、productName ASC、inventoryItemId ASC。
         expiringSoon:
           type: array
           maxItems: 5
           items:
             $ref: '#/components/schemas/DashboardAttentionItem'
+          description: 仅 daysUntilExpiry 在 0..30，含零库存；expiryDate ASC、productName ASC、inventoryItemId ASC。
+      description: 无分页。每组长度=min(全量匹配数,5)；空组为 []。名称按 Unicode 码点升序、ID 按 UUID 升序作稳定排序。过期库存若为 low_stock/out_of_stock，仍进入对应列表与 All；不进入 expiringSoon。
+    DashboardInventorySummary:
+      allOf:
+      - $ref: '#/components/schemas/DashboardSnapshot'
+      - type: object
+        required:
+        - summary
+        - attentionItems
+        properties:
+          summary:
+            $ref: '#/components/schemas/DashboardSummary'
+          attentionItems:
+            $ref: '#/components/schemas/DashboardAttentionItems'
+    DashboardTopUsedProduct:
+      type: object
+      required:
+      - inventoryItemId
+      - inventoryItemAvailable
+      - productName
+      - category
+      - quantityUsed
+      - unitName
+      - trendPercentage
+      properties:
+        inventoryItemId:
+          type: string
+          format: uuid
+        inventoryItemAvailable:
+          type: boolean
+          description: 该库存记录未移出时为 true，已软删除时为 false；不影响历史用量资格。榜单所有行都不提供详情跳转。
+        productName:
+          type: string
+          description: 当前统计期内最后一条符合条件的 Activity.productNameSnapshot；以 occurredAt DESC、activity ID DESC 确定最后一条。
+        category:
+          $ref: '#/components/schemas/CategoryReference'
+          description: 该 Inventory 对应 Product 当前的 Category 引用（保留的商品/类别记录，即使已软删除）；不是 Activity 时点的类别快照。不得因库存移出而丢弃历史用量，不要求新增历史类别回填。
+        quantityUsed:
+          type: string
+          pattern: ^(?:0\.(?:0[1-9]|[1-9]\d?)|[1-9]\d*(?:\.\d{1,2})?)$
+          description: 本期所有符合条件 Activity 的 -quantityDelta 之和；必须大于 0，按该库存商品自身单位计数，不换算单位或金额。
+        unitName:
+          type: string
+          description: 与 productName 使用同一条 Activity.unitNameSnapshot；沿用现有库存单位，不做跨单位换算。
+        trendPercentage:
+          anyOf:
+          - type: string
+            pattern: ^-?(0|[1-9]\d*)\.\d{2}$
+          - type: 'null'
+          description: (本期用量-前期用量)/前期用量×100，Decimal ROUND_HALF_UP 至两位小数；前期为 0 返回 null，Web 显示 —，不得返回 Infinity。前期按同一 inventoryItemId
+            的全部合格活动计算，不受前期是否上榜影响。
+    DashboardTopUsedProducts:
+      allOf:
+      - $ref: '#/components/schemas/DashboardSnapshot'
+      - type: object
+        required:
+        - period
+        - fromDate
+        - toDate
+        - previousFromDate
+        - previousToDate
+        - items
+        properties:
+          period:
+            type: string
+            const: 30d
+          fromDate:
+            type: string
+            format: date
+            description: 当前诊所日期 D 减 29 天，含当天当地零点；例如 D=2026-09-23，fromDate=2026-08-25。
+          toDate:
+            type: string
+            format: date
+            description: asOf 的诊所当地日期 D，包含今天；当天仅累计 occurredAt <= asOf 的记录。
+          previousFromDate:
+            type: string
+            format: date
+            description: D 减 59 天，当地零点包含；例如 2026-07-26。
+          previousToDate:
+            type: string
+            format: date
+            description: D 减 30 天，包含该自然日；即本期 fromDate 当地零点之前，例如 2026-08-24。
+          items:
+            type: array
+            maxItems: 5
+            items:
+              $ref: '#/components/schemas/DashboardTopUsedProduct'
+            description: 只纳入本期用量 > 0 的库存记录；quantityUsed 数值 DESC、productName Unicode 码点 ASC、inventoryItemId ASC 排序，最多 5 条，空结果为 []。
+        description: 以当前组织 Activity 为唯一数量来源，reasonCode=product_used 且 quantityDelta<0，按 inventoryItemId 分组。无论 Decrease 或 Set 操作，只要满足上述条件都累计实际减少量。排除
+          data_correction、physical_stock_count_correction、损坏/过期、收货和其他原因；correction 不自动抵扣历史用量。窗口按诊所自然日定义，不按固定 720 小时；已移出当前库存的历史记录仍参与。
     DashboardPurchaseListOverview:
-      type: object
-      required:
-      - openLists
-      - itemsRemaining
-      - varianceFreeOrderedLists
-      - recentLists
-      properties:
-        openLists:
-          type: integer
-          minimum: 0
-          description: Approved 与 Ordered Purchase Lists 总数。
-        itemsRemaining:
-          type: integer
-          minimum: 0
-          description: 所有 Approved/Ordered Lists 中 `remainingQuantity > 0` 的 Purchase List Item 行数。
-        varianceFreeOrderedLists:
-          type: integer
-          minimum: 0
-          description: 所有 items 均 exact-received、可无需 variance confirmation 完成的 Ordered List 数量。
-        recentLists:
-          type: array
-          maxItems: 4
-          description: 最近更新的 Approved/Ordered Lists，按 updatedAt DESC、id DESC 排序。
-          items:
-            $ref: '#/components/schemas/PurchaseListSummary'
-    Dashboard:
-      type: object
-      required:
-      - summary
-      - inventoryItemsByCategory
-      - topUsedProducts
-      - attentionItems
-      - purchaseListOverview
-      - asOf
-      properties:
-        summary:
-          $ref: '#/components/schemas/DashboardSummary'
-        inventoryItemsByCategory:
-          $ref: '#/components/schemas/InventoryCategoryBreakdown'
-        topUsedProducts:
-          $ref: '#/components/schemas/DashboardTopUsedProducts'
-        attentionItems:
-          $ref: '#/components/schemas/DashboardAttentionItems'
-        purchaseListOverview:
-          $ref: '#/components/schemas/DashboardPurchaseListOverview'
-        asOf:
-          type: string
-          format: date-time
-          examples: &id017
-          - '2026-08-12T11:30:45-04:00'
-          description: 服务器生成该统计或预测快照的时间。必须转换为当前 Organization Timezone，并以包含 UTC Offset 的 RFC 3339 Date-Time 返回；不得返回无 Offset
-            的本地时间。
-      example:
-        summary:
-          totalItems: 120
-          lowStockItems: 8
-          outOfStockItems: 3
-          expiringSoonItems: 6
-        inventoryItemsByCategory:
-          totalItems: 120
-          categories:
-          - category:
-              id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
-              name: Disposables
-              slug: disposables
-            count: 42
-            percentage: '35.00'
-          - category:
-              id: 0dd6feea-e03e-493f-9408-7a3e5b947c77
-              name: Restorative
-              slug: restorative
-            count: 28
-            percentage: '23.33'
-        topUsedProducts:
-          period: 30d
-          items:
-          - inventoryItemId: 8e41d6c8-b0ce-49de-aa8a-eef2f0da7322
-            inventoryItemAvailable: true
-            productName: Nitrile Exam Gloves
-            category:
-              id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
-              name: Disposables
-              slug: disposables
-            quantityUsed: '42.00'
-            unitName: Box
-            trendPercentage: '12.50'
-        attentionItems:
-          outOfStock:
-          - inventoryItemId: 08f7c98d-0e52-433f-b555-05a8fc109e4e
-            productName: Etch Gel
-            category:
-              id: 0dd6feea-e03e-493f-9408-7a3e5b947c77
-              name: Restorative
-              slug: restorative
-            quantityOnHand: '0.00'
-            unitName: Syringe
-            lowStockThreshold: '5.00'
-            inventoryStatus: out_of_stock
-            expiryDate: null
-            expiryStatus: not_set
-            daysUntilExpiry: null
-          lowStock: []
-          expiringSoon: []
-        purchaseListOverview:
-          openLists: 4
-          itemsRemaining: 11
-          varianceFreeOrderedLists: 1
-          recentLists: []
-        asOf: '2026-08-12T11:30:45-04:00'
-    CategoryUsageTrend:
-      type: object
-      required:
-      - period
-      - fromDate
-      - toDate
-      - timezone
-      - granularity
-      - series
-      - asOf
-      properties:
-        period:
-          type: string
-          enum:
-          - last_6_months
-          - last_12_months
-          - last_24_months
-        fromDate:
-          type: string
-          format: date
-        toDate:
-          type: string
-          format: date
-        timezone:
-          type: string
-          examples:
-          - America/Toronto
-        granularity:
-          type: string
-          const: month
-        series:
-          type: array
-          description: 只返回所选周期内有 Product Used 记录的 Category；每个返回的 Category 包含完整月份序列，无用量月份补 0。
-          items:
+      allOf:
+      - $ref: '#/components/schemas/DashboardSnapshot'
+      - type: object
+        required:
+        - limit
+        - weekStartDate
+        - counts
+        - lists
+        properties:
+          limit:
+            type: integer
+            minimum: 1
+            maximum: 5
+            description: 本次实际使用的每组列表上限；未传 query 时为 3。
+          weekStartDate:
+            type: string
+            format: date
+            description: asOf 所在诊所当地周的周一日期；周窗口从当地周一 00:00 到 asOf（含）。夏令时不改变自然周定义。
+          counts:
             type: object
             required:
-            - category
-            - points
+            - draftItems
+            - approvedLists
+            - orderedLists
+            - completedThisWeek
             properties:
-              category:
-                $ref: '#/components/schemas/CategoryReference'
-              points:
+              draftItems:
+                type: integer
+                minimum: 0
+                description: 当前组织共享 Draft 的商品行数，不是 plannedQuantity 合计。
+              approvedLists:
+                type: integer
+                minimum: 0
+                description: 当前 status=approved 的清单总数。
+              orderedLists:
+                type: integer
+                minimum: 0
+                description: 当前 status=ordered 的清单总数。
+              completedThisWeek:
+                type: integer
+                minimum: 0
+                description: 当前 status=completed 且 completedAt 在本地周一零点至 asOf（含）的清单数；不是累计 Completed，也不按 createdAt 计数。
+          lists:
+            type: object
+            required:
+            - approved
+            - ordered
+            - completedThisWeek
+            properties:
+              approved:
                 type: array
+                maxItems: 5
                 items:
-                  type: object
-                  required:
-                  - month
-                  - quantityUsed
-                  properties:
-                    month:
-                      type: string
-                      pattern: ^\d{4}-(0[1-9]|1[0-2])$
-                      examples:
-                      - 2026-08
-                    quantityUsed: *id014
-        asOf:
-          type: string
-          format: date-time
-          examples: *id017
-          description: 服务器生成该统计或预测快照的时间。必须转换为当前 Organization Timezone，并以包含 UTC Offset 的 RFC 3339 Date-Time 返回；不得返回无 Offset
-            的本地时间。
-      example:
-        period: last_6_months
-        fromDate: '2026-03-01'
-        toDate: '2026-08-12'
-        timezone: America/Toronto
-        granularity: month
-        series:
-        - category:
-            id: 1248917b-8218-4b9b-aeda-43d09fdedfd3
-            name: Disposables
-            slug: disposables
+                  allOf:
+                  - $ref: '#/components/schemas/PurchaseListSummary'
+                  - type: object
+                    properties:
+                      status:
+                        const: approved
+                description: 当前 Approved 清单，最多 limit 条。
+              ordered:
+                type: array
+                maxItems: 5
+                items:
+                  allOf:
+                  - $ref: '#/components/schemas/PurchaseListSummary'
+                  - type: object
+                    properties:
+                      status:
+                        const: ordered
+                description: 当前 Ordered 清单，最多 limit 条；receiptCounts 沿用采购页口径，不表示能否强制完成。
+              completedThisWeek:
+                type: array
+                maxItems: 5
+                items:
+                  allOf:
+                  - $ref: '#/components/schemas/PurchaseListSummary'
+                  - type: object
+                    properties:
+                      status:
+                        const: completed
+                      completedAt:
+                        type: string
+                        format: date-time
+                description: 仅本周 Completed 清单，最多 limit 条；不是最近创建或最近更新的 Completed。
+            description: 三组均按 createdAt DESC、id DESC 排序，长度=min(对应完整计数,limit)，不分页；取消清单不进入任何组。
+        description: 一次返回四个数字和三组列表，数字不受 limit 影响；切换 Approved/Ordered/Completed 不需要重新请求。默认 Web 选择 Ordered；Draft 使用独立跳转，不改变列表选择。移除旧 openLists/itemsRemaining/varianceFreeOrderedLists/recentLists
+          指标，不修改采购生命周期及强制完成规则。
+    DashboardPurchaseSpendPeriod:
+      type: string
+      enum:
+      - last_6_months
+      - last_12_months
+      - last_24_months
+      default: last_6_months
+    DashboardPurchaseSpend:
+      allOf:
+      - $ref: '#/components/schemas/DashboardSnapshot'
+      - type: object
+        required:
+        - period
+        - fromDate
+        - toDate
+        - currencyCode
+        - granularity
+        - points
+        properties:
+          period:
+            $ref: '#/components/schemas/DashboardPurchaseSpendPeriod'
+          fromDate:
+            type: string
+            format: date
+            description: 包含当月的 N 个月序列的首月 1 日。
+          toDate:
+            type: string
+            format: date
+            description: asOf 的诊所当地日期，包含当月截至 asOf 的收货。
+          currencyCode:
+            type: string
+            enum:
+            - CAD
+            - USD
+            description: 当前 Organization.currencyCode；沿用现有单币种价格约定，不做汇率换算。采购价格没有逐次收货币种快照；组织更改币种不会转换历史数值，此趋势是收货价值估算，不是多币种账本。
+          granularity:
+            type: string
+            const: month
           points:
-          - month: 2026-03
-            quantityUsed: '32.00'
-          - month: 2026-04
-            quantityUsed: '0.00'
-          - month: 2026-05
-            quantityUsed: '41.00'
-          - month: 2026-06
-            quantityUsed: '38.00'
-          - month: 2026-07
-            quantityUsed: '45.00'
-          - month: 2026-08
-            quantityUsed: '18.00'
-        asOf: '2026-08-12T11:30:45-04:00'
+            type: array
+            maxItems: 24
+            items:
+              type: object
+              required:
+              - month
+              - amount
+              properties:
+                month:
+                  type: string
+                  pattern: ^\d{4}-(0[1-9]|1[0-2])$
+                amount:
+                  type: string
+                  pattern: ^(0|[1-9]\d*)\.\d{2}$
+                  description: 非负 Decimal 金额，固定两位小数字符串；不得使用浮点数累计。
+            description: 按月份升序，恰好 N=6/12/24 条，month 唯一且连续；无收货或只有缺价收货的月份金额为 0.00。
+            minItems: 6
+        description: Purchase Spend / Value of supplies received。按实际入库且截至 asOf 已记录的有效收货数量 × 采购单 unitPrice 快照计算，按原收货 occurredAt 在 Organization
+          时区归月。分批跨月分别计入；截至 asOf 的纠正必须回到被纠正收货的原月份，不能记在纠正月份。Ordered/Completed 状态变化、强制完成和 Inventory 当前价格不增加或重复计算金额；完成后已有有效收货仍保留。unitPrice=null
+          的收货排除，不推算为已知零价；unitPrice=0 是有效零价。先以 Decimal 精确乘积累计每月金额，再按 ROUND_HALF_UP 四舍五入至两位小数。固定轻提示由 Web 展示：Estimated from received quantities
+          and purchase prices. Items without a price are excluded. 当前跨批次纠正缺少原收货关联；补足关联、历史处理及验证是本接口实现前置条件，不得用纠正操作月份、比例分摊或最新一批猜测。详见 dashboard-contract.md。
+      - oneOf:
+        - type: object
+          required: [period, points]
+          properties:
+            period: {const: last_6_months}
+            points: {type: array, minItems: 6, maxItems: 6}
+        - type: object
+          required: [period, points]
+          properties:
+            period: {const: last_12_months}
+            points: {type: array, minItems: 12, maxItems: 12}
+        - type: object
+          required: [period, points]
+          properties:
+            period: {const: last_24_months}
+            points: {type: array, minItems: 24, maxItems: 24}
     AnalyticsConsumptionTrend:
       type: object
       required:
