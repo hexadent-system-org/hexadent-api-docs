@@ -1921,19 +1921,19 @@ paths:
       tags:
       - Dashboard
       operationId: getDashboardPurchaseSpend
-      summary: 获取 Purchase Spend 月度收货价值
-      description: 独立金额趋势接口，替代旧 Dashboard usage-trend 的消耗数量合同。金额为实际收货价值估算，不是付款流水。上线前必须满足 dashboard-contract.md 中的收货纠正关联与历史处理前置条件；不得悄悄忽略无法归属的纠正。
+      summary: 获取 Purchase Spend 月度下单价值
+      description: 独立金额趋势接口，替代旧 Dashboard usage-trend 的消耗数量合同。金额为采购单下单价值估算，不是收货价值或付款流水。按 orderedAt 的诊所月份统计下单数量乘单价快照；收货和纠正不改变金额。
         所有 active Member 可读；组织由认证账户上下文确定，不接受 organizationId 覆盖，所有源记录和关联均限当前组织。四个模块独立读取和重试；本合同为待实现目标，不表示运行时已上线。
       responses:
         '200':
-          description: 获取 Purchase Spend 月度收货价值
+          description: 获取 Purchase Spend 月度下单价值
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DashboardPurchaseSpend'
               examples:
-                correctedReceipts:
-                  summary: 8 月误录 8 盒纠正为 6 盒、9 月收到 4 盒，单价 20；归原月为 120/80
+                orderedSnapshots:
+                  summary: 8 月下单 10 盒、9 月下单 4 盒，单价 20；无论分批收货、纠正或完成，金额仍为 200/80
                   value:
                     timezone: America/Toronto
                     asOf: '2026-09-23T12:00:00-04:00'
@@ -1952,11 +1952,11 @@ paths:
                     - month: 2026-07
                       amount: '0.00'
                     - month: 2026-08
-                      amount: '120.00'
+                      amount: '200.00'
                     - month: 2026-09
                       amount: '80.00'
                 empty:
-                  summary: 无收货或全部缺价时仍返回完整零月份；Web 保留固定估算提示
+                  summary: 无下单或下单商品全部缺价时仍返回完整零月份；Web 保留固定估算提示
                   value:
                     timezone: America/Toronto
                     asOf: '2026-09-23T12:00:00-04:00'
@@ -4689,13 +4689,13 @@ components:
           toDate:
             type: string
             format: date
-            description: asOf 的诊所当地日期，包含当月截至 asOf 的收货。
+            description: asOf 的诊所当地日期，包含当月 orderedAt 不晚于 asOf 的采购清单。
           currencyCode:
             type: string
             enum:
             - CAD
             - USD
-            description: 当前 Organization.currencyCode；沿用现有单币种价格约定，不做汇率换算。采购价格没有逐次收货币种快照；组织更改币种不会转换历史数值，此趋势是收货价值估算，不是多币种账本。
+            description: 当前 Organization.currencyCode；沿用现有单币种价格约定，不做汇率换算。采购价格没有逐单币种快照；组织更改币种不会转换历史数值，此趋势是下单价值估算，不是多币种账本。
           granularity:
             type: string
             const: month
@@ -4715,12 +4715,14 @@ components:
                   type: string
                   pattern: ^(0|[1-9]\d*)\.\d{2}$
                   description: 非负 Decimal 金额，固定两位小数字符串；不得使用浮点数累计。
-            description: 按月份升序，恰好 N=6/12/24 条，month 唯一且连续；无收货或只有缺价收货的月份金额为 0.00。
+            description: 按月份升序，恰好 N=6/12/24 条，month 唯一且连续；无下单或下单商品全部缺价的月份金额为 0.00。
             minItems: 6
-        description: Purchase Spend / Value of supplies received。按实际入库且截至 asOf 已记录的有效收货数量 × 采购单 unitPrice 快照计算，按原收货 occurredAt 在 Organization
-          时区归月。分批跨月分别计入；截至 asOf 的纠正必须回到被纠正收货的原月份，不能记在纠正月份。Ordered/Completed 状态变化、强制完成和 Inventory 当前价格不增加或重复计算金额；完成后已有有效收货仍保留。unitPrice=null
-          的收货排除，不推算为已知零价；unitPrice=0 是有效零价。先以 Decimal 精确乘积累计每月金额，再按 ROUND_HALF_UP 四舍五入至两位小数。固定轻提示由 Web 展示：Estimated from received quantities
-          and purchase prices. Items without a price are excluded. 当前跨批次纠正缺少原收货关联；补足关联、历史处理及验证是本接口实现前置条件，不得用纠正操作月份、比例分摊或最新一批猜测。详见 dashboard-contract.md。
+        description: Purchase Spend / Estimated value of orders placed。统计当前组织 Ordered 和 Completed 清单的 plannedQuantity × unitPrice 快照，
+          按 orderedAt 在 Organization 时区归月，范围从 fromDate 当地零点到 asOf（含截止点）。Draft、Approved、Cancelled 不计入。
+          下单后不允许取消或修改下单数量和单价；分批或跨月收货、收货纠正、Completed（包括强制完成）不改变原下单金额，也不重复计算。
+          商品移出当前库存或当前 Inventory 价格变化不影响历史下单快照。unitPrice=null 的商品排除，unitPrice=0 是有效零价。
+          先以 Decimal 精确乘积累计每月金额，再按 ROUND_HALF_UP 四舍五入至两位小数。固定轻提示由 Web 展示：Estimated from ordered quantities
+          and purchase prices. Items without a price are excluded. This does not represent payments. 不读取收货事件，不要求原收货关联或历史纠正回填。详见 dashboard-contract.md。
       - oneOf:
         - type: object
           required: [period, points]
