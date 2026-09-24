@@ -1,6 +1,6 @@
 # Dashboard contract
 
-This is the target contract for the Web Dashboard, approved on 2026-09-23.
+This is the target contract for the Web Dashboard, approved on 2026-09-23, with the Purchase Spend amendment approved on 2026-09-24.
 It does not claim that these endpoints are implemented or deployed. The source
 requirements and delivery status are in the [Dashboard Docs task](https://www.notion.so/3df41cca7e9c811996ffe98a8071d388).
 
@@ -11,7 +11,7 @@ requirements and delivery status are in the [Dashboard Docs task](https://www.no
 | `/dashboard/inventory-summary` | Four inventory counts and four attention lists | None |
 | `/dashboard/purchase-list-overview` | Draft row count, Approved/Ordered counts, this week's Completed count, three lists | `limit`: integer 1–5, default 3, applied separately to each list |
 | `/dashboard/top-used-products` | Five most-used inventory records and comparison with the previous 30 days | None |
-| `/dashboard/purchase-spend` | Monthly received-supply value | `period`: `last_6_months` (default), `last_12_months`, `last_24_months` |
+| `/dashboard/purchase-spend` | Monthly ordered-supply value | `period`: `last_6_months` (default), `last_12_months`, `last_24_months` |
 
 Clients can request modules in parallel and retry a failed module independently.
 Counts and lists in one response must use the same database snapshot and `asOf`.
@@ -96,42 +96,58 @@ historical category snapshot in Activity today. This choice does not require a
 new history backfill. Units are not normalized across products. All rows are
 display-only, including still-available inventory.
 
-## Purchase Spend and implementation prerequisite
+## Purchase Spend
+
+The 2026-09-24 approved amendment replaces received-value accounting with ordered
+value. Keep the card title **Purchase Spend** and use the subtitle **Estimated
+value of orders placed**. The endpoint, period values, and response shape remain
+unchanged; this is the target for the not-yet-implemented API and Web module.
 
 Return one total amount per month, not consumption quantities or per-category
 series. Include the current incomplete month and exactly 6, 12, or 24 continuous
-months in ascending order. Amount is received quantity times the Purchase List
-item's unit-price snapshot, assigned to the original receipt month in the clinic
-timezone. Compute precise Decimal products, sum by month, then round half-up to
-two decimal places. Missing price is excluded; an explicit zero price is valid.
-An empty month, including a month with only missing-price receipts, is `0.00`.
-This is not proof that all received supplies were free or no supplies arrived.
+months in ascending order. Use Purchase List item `plannedQuantity` times its
+`unitPrice` snapshot, assigned to the list's `orderedAt` month in the clinic
+timezone. Include lists currently Ordered or Completed with `orderedAt` between
+local midnight on `fromDate` and `asOf`, inclusive. Draft, Approved, and Cancelled
+lists do not contribute. Join all records within the authenticated organization.
+
+The current lifecycle prohibits cancellation and changes to ordered quantities
+or price snapshots after ordering. Receiving (including partial or cross-month
+receiving), receipt corrections, and completion (including forced completion)
+neither change the original ordered amount nor add another amount. Retain ordered
+snapshots after inventory removal; do not join/filter on current inventory
+availability or use current Inventory prices. This measures order placement,
+not eventual fulfilled value, consumption, invoices, refunds, or payments.
+
+Compute precise Decimal products, sum by month, then round half-up to two decimal
+places. Missing price is excluded; an explicit zero price is valid. An empty month,
+including a month with only missing-price ordered items, is `0.00`. This is not
+proof that all orders were free or that no orders were placed.
 
 Follow the existing single-currency price convention: return the current
-Organization `currencyCode`. Existing purchase prices have no per-receipt currency
+Organization `currencyCode`. Existing purchase prices have no per-order currency
 snapshot; changing regional currency does not convert historical numeric values.
-This contract does not introduce FX, historical currency accounting, or payment
-tracking. The Web always displays this approved qualification:
+This contract does not introduce FX or historical currency accounting. The Web
+always displays this qualification:
 
-> Estimated from received quantities and purchase prices. Items without a price are excluded.
+> Estimated from ordered quantities and purchase prices. Items without a price are excluded. This does not represent payments.
 
-Only received quantities contribute. Merely ordering, completing (including forced
-completion), or later editing an Inventory price adds no spend. Prior effective
-receipts remain included after completion. Corrections known by `asOf` change the
-original receipt month's quantity, even when the correction was made outside the
-displayed month; do not filter corrections solely by the displayed receipt window.
+### Amendment and implementation dependencies
 
-**Implementation is blocked on receipt attribution.** The current
-`PurchaseReceiptEvent` holds a cumulative-total correction and delta, but no link
-to the particular receipt batch corrected. Multiple batches in different months
-cannot be attributed safely from that data. Before the spend API is implemented,
-a separately scoped task must define and provide original-receipt association,
-historical handling, and verified migration/fixtures where needed. Do not guess
-latest-batch allocation or proportional allocation, silently discard corrections,
-or change the approved original-month policy to correction-month accounting.
-This Docs task authorizes no API, database, Web, or infrastructure changes and
-does not promise the spend module is ready to ship. Other modules can proceed
-after their own contract and readiness gates.
+The user approved ordered-month / ordered-quantity accounting in the Codex
+Purchase Spend task on 2026-09-24, retained the card title, and confirmed that
+ordered lists cannot currently be cancelled or their ordered amounts edited.
+They then requested contract update, Notion task update, and API execution in that
+order. This supersedes the 2026-09-23 received-value and original-receipt-month
+correction policy. Receipt attribution and historical correction migration are
+no longer prerequisites for this metric; the receipt workflow itself is unchanged.
+
+Implementation uses existing Purchase List `orderedAt` and item quantity/price
+snapshots. Verify the existing schema and tenant-scoped query behavior; do not
+introduce receipt links, migrations, or provisioning under this contract change.
+Docs, API, and the existing Web integration task are independently delivered,
+in that compatibility order. The API remains read-only; the Web changes only its
+source data and the approved subtitle/qualification in its own task.
 
 ## Representative acceptance cases
 
@@ -149,13 +165,15 @@ The OpenAPI response examples are schema-validated with the repository checks.
 | September 23 Top Used | Current Aug 25–Sep 23 (to asOf), previous Jul 26–Aug 24. A record at Aug 25 00:00 is current, one just before is previous. |
 | Same inventory used 3+2+4; prior 6; generic correction +2 | Current 9, comparison +50.00%; correction does not change 9. |
 | Removed inventory used 4; prior 0 | Still ranked if eligible; `inventoryItemAvailable=false`, trend null. |
-| Aug receipt 8×20 corrected to 6×20 in September, plus September receipt 4×20 | Aug 120.00, Sep 80.00, with known original-batch links; no additional amount on completion. See spend `correctedReceipts` example. |
-| A received item has unitPrice null | Excluded; the fixed estimate warning remains. Explicit unitPrice 0 contributes a known zero. |
-| Two effective receipts, each 0.25 units at 0.01, same month | Exact monthly sum 0.005 rounds half-up to 0.01; do not round each product before summing. |
-| No receipts in the default period at 2026-09-23 | Six zero points April–September, not an empty points array. |
+| Aug order 10×20; Sep order 4×20; Aug order partially received, corrected, then force-completed in Sep | Aug 200.00, Sep 80.00 throughout; receipts and completion add no spend. See spend `orderedSnapshots` example. |
+| An ordered item has unitPrice null | Excluded; the fixed estimate warning remains. Explicit unitPrice 0 contributes a known zero. |
+| Two ordered items, each 0.25 units at 0.01, same month | Exact monthly sum 0.005 rounds half-up to 0.01; do not round each product before summing. |
+| Draft/Approved/Cancelled lists; ordered snapshot whose Inventory item was removed | First three statuses excluded; retained ordered snapshot still included. |
+| Order at local first-month midnight or exactly asOf; order just outside either boundary | Boundary timestamps included; outside timestamps excluded. |
+| No orders in the default period at 2026-09-23 | Six zero points April–September, not an empty points array. |
 
 Release evidence for this task is contract validation plus independent review and
 user-verified CI. Page QA and API/Web deployment verification do not apply to this
 Docs-only change. Runtime isolation, timestamp boundaries, query performance,
-receipt attribution, and browser acceptance remain gates of their implementation
+ordered snapshot aggregation, and browser acceptance remain gates of their implementation
 tasks, not evidence supplied by this document.
