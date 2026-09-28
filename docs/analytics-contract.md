@@ -58,11 +58,12 @@ Let `M` be Minimum Quantity, `d` be mean usage per Monday-to-Friday business
 day, `L` be lead time in business days, and `U(a,b)` be expected usage on
 business days in the half-open interval `[a,b)`. The first projected date at
 or below M and at or below zero are distinct. The order-by date is the first
-clinic-local order date `t` for which projected stock upon arrival,
+Monday-to-Friday clinic-local order date `t`, no earlier than today, for which projected stock upon arrival,
 `max(0, A - U(today, t + L))`, is at or below M. If this already holds, return
-today. `t + L` advances by L Monday-to-Friday business days; `t` itself may
-fall on a weekend, since the contract does not assert that the clinic cannot
-submit an order that day. The arrival stock is
+today when it is a business day, or the next Monday when today is a weekend.
+`t + L` advances by L Monday-to-Friday business days. A trigger reached on a
+weekend is scheduled for the next Monday; the projected stockout date may
+precede the estimated arrival date and remains visible in the response. The arrival stock is
 `S = max(0, A - U(today, orderBy + L))`. Raw additional
 quantity is `max(0, M + U(arrival, arrival + R calendar days) - S)`; convert
 to the purchasing unit, round up to its pack multiple and minimum order
@@ -74,11 +75,18 @@ At least three valid received order samples are needed for historical `L`.
 Each clinic-wide sample runs from an Ordered timestamp to its first positive
 receipt; a missing or reversed timestamp is invalid. Convert both timestamps
 to the clinic timezone, then count Monday-to-Friday dates strictly after the
-order date through the first receipt date, inclusive. Do not trim valid long
+order date through the first receipt date, inclusive. A receipt on a later
+local date counts at least one business day, even when it falls on a weekend;
+only a same-local-date receipt may have zero lead days. Do not trim valid long
 durations. Use the median business-day duration for valid samples, rounding a
 half-day median up to the next whole business day; fewer than three uses five
 business days. Return the source
 and sample count. This is a planning estimate, not a supplier ETA.
+
+For example, if the clinic-local date is Saturday 2026-10-03 and the threshold
+is already met, `orderByDate` is Monday 2026-10-05. With a five-business-day
+lead time, estimated arrival is Monday 2026-10-12. Holidays are not subtracted
+in this MVP estimate.
 
 The latest valid Ordered/Completed price snapshot for the same inventory item
 prices additional quantity. `estimatedTotal` is the rounded product of that
@@ -109,7 +117,10 @@ The 30-day summary amount is a different time window and need not equal a
 calendar-month point.
 
 The selected month breakdown uses the same rows and exact total as its trend
-point. Missing categories go into an explicit `uncategorized` bucket; an item
+point. Both historical Actual and future Forecast amounts use each product's
+current category. Changing that category reclassifies prior months without
+changing their total amount; the purchase snapshot has no category field.
+Missing categories go into an explicit `uncategorized` bucket; an item
 is counted once. Amounts are summed as Decimal before rounding, so the
 response includes a rounding adjustment if independently rounded category
 amounts do not sum to the rounded total. A future month requires a forecast

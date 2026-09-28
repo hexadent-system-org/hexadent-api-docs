@@ -2014,7 +2014,7 @@ paths:
       tags: [Analytics]
       operationId: getForecastedBuyingNeeds
       summary: 获取未来 30 天采购需求、三张指标和下单日历
-      description: 所有 active Member 可读，仅当前组织。风险窗口和 Order By 范围固定为 [今天, 今天+30 个诊所当地自然日)；coverageDays 只改变额外采购量与预算。汇总和日历按全部符合条件的 SKU 计算，不受分页影响。请求只读取每日消耗率基线与实时库存、采购快照，不扫描历史活动。详见 analytics-contract.md。
+      description: 所有 active Member 可读，仅当前组织。风险窗口和 Order By 范围固定为 [今天, 今天+30 个诊所当地自然日)；Order By 仅为周一至周五，周末已触线则取下一个周一。coverageDays 只改变额外采购量与预算。汇总和日历按全部符合条件的 SKU 计算，不受分页影响。请求只读取每日消耗率基线与实时库存、采购快照，不扫描历史活动。详见 analytics-contract.md。
       parameters:
       - name: coverageDays
         in: query
@@ -2049,7 +2049,7 @@ paths:
       tags: [Analytics]
       operationId: getAnalyticsPurchaseSpend
       summary: 获取采购实际金额和未来建议预算趋势及所选月分类
-      description: 历史 Ordered/Completed 的 plannedQuantity × unitPrice 按诊所当地 orderedAt 月份归属，与 Dashboard Purchase Spend 同口径。未来两个完整自然月按虚拟建议 Order By 月份归属，明确标为 forecast；不写库存或采购清单。所选月份分类总额与对应趋势点一致。详见 analytics-contract.md。
+      description: 历史 Ordered/Completed 的 plannedQuantity × unitPrice 按诊所当地 orderedAt 月份归属，与 Dashboard Purchase Spend 同口径。未来两个完整自然月按虚拟建议 Order By 月份归属，明确标为 forecast；不写库存或采购清单。历史和未来的品类拆分都按商品当前品类；改品类会重分组历史分类但不改总金额。所选月份分类总额与对应趋势点一致。详见 analytics-contract.md。
       parameters:
       - name: period
         in: query
@@ -4730,7 +4730,7 @@ components:
             roundingAdjustment: {type: [string, 'null'], pattern: '^-?\d+\.\d{2}$', description: totalAmount 与已四舍五入分类金额之和的差；不可用时为 null。}
             categories:
               type: array
-              description: 按金额降序，同额按类别名称和 ID 稳定排序；无法定位类别的商品归入 uncategorized。
+              description: 历史 Actual 和未来 Forecast 都按商品当前品类分组；品类变更会重分组历史但不改总金额。按金额降序，同额按类别名称和 ID 稳定排序；无法定位类别的商品归入 uncategorized。
               items:
                 type: object
                 required: [category, amount]
@@ -4837,8 +4837,8 @@ components:
         predictedStockoutDate: {type: [string, 'null'], format: date, description: 预计规划库存首次达到 0 的当地日期。}
         daysUntilStockout: {type: [integer, 'null'], minimum: 0}
         recommendedQuantity: {type: string, pattern: '^(0|[1-9]\d*)(\.\d{1,2})?$', description: 额外采购量；以 Order By 到货后的 R 自然日覆盖期、Minimum Quantity、采购单位和起订量计算。}
-        orderByDate: {type: string, format: date, description: 首个满足到货时规划剩余量不高于 Minimum Quantity 的可下单当地日期；已触线则今天。}
-        leadTimeBusinessDays: {type: integer, minimum: 0, description: 历史样本按诊所当地日期，从下单日之后到首次正收货日（含）计周一至周五；至少三笔取中位数，半天中位数向上取整。}
+        orderByDate: {type: string, format: date, examples: ['2026-10-05'], description: 不早于今天、首个满足到货时规划剩余量不高于 Minimum Quantity 的周一至周五当地日期；工作日已触线则今天，2026-10-03 周六已触线则为 2026-10-05 周一。}
+        leadTimeBusinessDays: {type: integer, minimum: 0, description: 历史样本按诊所当地日期，从下单日之后到首次正收货日（含）计周一至周五；跨当地日期至少计 1 个营业日，同当地日期可为 0。至少三笔取中位数，半天中位数向上取整。}
         leadTimeSource: {type: string, enum: [clinic_history, default_five_business_days]}
         leadTimeSampleCount: {type: integer, minimum: 0, description: 至少三笔有效已收货订单时采用历史营业日交期中位数，否则默认五营业日。}
         purchaseStatus: {type: string, enum: [not_added, draft, approved, ordered_with_additional_gap], description: 若 SKU 同时存在多个状态，按 Ordered、Approved、Draft 优先级返回，且只显示仍需追加购买的 Ordered。}
