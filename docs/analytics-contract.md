@@ -16,15 +16,17 @@ by these contracts. Dashboard Purchase Spend remains unchanged.
   request never scans historical activity to repair a missing baseline.
 - Only negative Inventory Activity with `reasonCode=product_used` contributes to
   demand. Corrections, damage, expiry, and other decreases do not. A SKU must
-  have been observable for at least 60 clinic-local calendar days and have
-  positive usage in at least four distinct Monday-start weeks. Otherwise its
+  have been observable for at least 28 clinic-local calendar days and have
+  positive usage in at least two distinct Monday-start weeks. Otherwise its
   rate and forecasts are unavailable, never fabricated as zero. The observation
   interval begins when the inventory item becomes active; weekend Product Used
   events remain in the numerator and the denominator counts Monday-to-Friday
   business days. A valid zero
   rate is possible only after both eligibility checks pass.
 - The daily job stores a per-inventory-item demand rate, algorithm version and
-  cutoff date. It is rerunnable by organization and date. A missing baseline,
+  cutoff date. Different cutoff dates retain separate baselines; rerunning the
+  same organization, date and algorithm version replaces that day's result
+  idempotently. A missing baseline,
   failed run, or a cutoff before yesterday is reported as unavailable or stale;
   stale values are visibly marked if used. Live requests batch-read current
   inventory, ordered/received quantities, list states and price snapshots.
@@ -65,11 +67,14 @@ today when it is a business day, or the next Monday when today is a weekend.
 weekend is scheduled for the next Monday; the projected stockout date may
 precede the estimated arrival date and remains visible in the response. The arrival stock is
 `S = max(0, A - U(today, orderBy + L))`. Raw additional
-quantity is `max(0, M + U(arrival, arrival + R calendar days) - S)`; convert
-to the purchasing unit, round up to its pack multiple and minimum order
-quantity, then return the exact equivalent in the stated inventory unit. A failed or
-unsafe unit conversion makes that item's quantity and estimated amount
-unavailable. Already ordered incoming is never billed again.
+quantity is `max(0, M + U(arrival, arrival + R calendar days) - S)` in the
+product's inventory/purchase unit. Round it up to a whole unit and return it
+as a decimal string (for example, `2.3` becomes `3.00`). Current stock,
+purchase-list planned and received quantities, and the price snapshot use
+that same unit. `containedQuantity` describes contents within one unit and
+does not multiply or convert the recommendation. No separate pack multiple
+or minimum order quantity is modeled in MVP. Already ordered incoming is
+never billed again.
 
 At least three valid received order samples are needed for historical `L`.
 Each clinic-wide sample runs from an Ordered timestamp to its first positive
