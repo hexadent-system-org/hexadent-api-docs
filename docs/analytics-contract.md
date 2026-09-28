@@ -101,6 +101,13 @@ recommendations. Risk counts, table and calendar use the same SKU projection.
 When an entire baseline is unavailable, the API returns an explicit data state
 and no invented forecast totals.
 
+`purchaseStatus=draft` identifies an item in the organization's shared Draft.
+Draft items have no Purchase List ID, so a Draft-only row returns
+`purchaseListIds: []`; clients can use `inventoryItemId` to locate the item in
+the shared Draft. `purchaseListIds` contains only associated Approved and
+Ordered list IDs, deduplicated and sorted. A Draft item's absence of a list ID
+does not change its status or the forecast.
+
 ## Purchase Spend trend and breakdown
 
 `GET /analytics/purchase-spend` returns a continuous 6, 12 or 24 month actual

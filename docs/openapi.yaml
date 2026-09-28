@@ -4842,7 +4842,7 @@ components:
         leadTimeSource: {type: string, enum: [clinic_history, default_five_business_days]}
         leadTimeSampleCount: {type: integer, minimum: 0, description: 至少三笔有效已收货订单时采用历史营业日交期中位数，否则默认五营业日。}
         purchaseStatus: {type: string, enum: [not_added, draft, approved, ordered_with_additional_gap], description: 若 SKU 同时存在多个状态，按 Ordered、Approved、Draft 优先级返回，且只显示仍需追加购买的 Ordered。}
-        purchaseListIds: {type: array, items: {type: string, format: uuid}, description: 关联当前组织的 Draft、Approved、Ordered 清单 ID，去重并稳定排序。}
+        purchaseListIds: {type: array, items: {type: string, format: uuid}, description: 仅包含当前组织关联的 Approved、Ordered 清单 ID，去重并稳定排序。共享 Draft item 没有 Purchase List ID；Draft-only 行返回空数组，前端可用 inventoryItemId 定位共享草稿中的商品。}
         priceStatus: {type: string, enum: [available, unavailable]}
         unitPrice: {type: [string, 'null'], pattern: '^(0|[1-9]\d*)\.\d{2}$', description: 最近 Ordered/Completed 的有效采购单价快照，与 recommendedQuantity 单位相同；缺价为 null，零价有效。}
         estimatedTotal: {type: [string, 'null'], pattern: '^(0|[1-9]\d*)\.\d{2}$', description: 只计新增 recommendedQuantity × unitPrice；缺价为 null，不当作 0。}
