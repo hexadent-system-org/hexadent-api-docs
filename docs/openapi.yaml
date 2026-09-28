@@ -4718,7 +4718,7 @@ components:
               pricedItemCount: {type: integer, minimum: 0}
               unpricedItemCount: {type: integer, minimum: 0}
               unavailableItemCount: {type: integer, minimum: 0}
-              reason: {type: [string, 'null'], enum: [baseline_missing, baseline_stale, insufficient_history, unit_conversion_unavailable, null]}
+              reason: {type: [string, 'null'], enum: [baseline_missing, baseline_stale, insufficient_history, null]}
         breakdown:
           type: object
           required: [month, source, status, totalAmount, categories, roundingAdjustment]
@@ -4831,12 +4831,12 @@ components:
         incomingStock: {type: string, pattern: '^(0|[1-9]\d*)(\.\d{1,2})?$', description: '所有 Ordered 项 max(plannedQuantity-receivedQuantity, 0) 之和；部分收货量已在 currentStock 中，不重复计算。'}
         planningAvailable: {type: string, pattern: '^(0|[1-9]\d*)(\.\d{1,2})?$', description: currentStock + incomingStock，仅读取时规划，不写库存。}
         minimumQuantity: {type: string, pattern: '^(0|[1-9]\d*)(\.\d{1,2})?$'}
-        dailyUse: {type: string, pattern: '^(0|[1-9]\d*)(\.\d+)?$', description: 60 个诊所当地自然日可观察历史、至少 4 个不同周正消耗后，按营业日估算。}
+        dailyUse: {type: string, pattern: '^(0|[1-9]\d*)(\.\d+)?$', description: 至少 28 个诊所当地自然日可观察历史、至少 2 个不同周正消耗后，按营业日估算；这是可计算门槛，不保证预测准确度。}
         predictedReorderDate: {type: [string, 'null'], format: date, description: 预计规划库存首次达到或低于 Minimum Quantity 的当地日期。}
         daysUntilReorder: {type: [integer, 'null'], minimum: 0}
         predictedStockoutDate: {type: [string, 'null'], format: date, description: 预计规划库存首次达到 0 的当地日期。}
         daysUntilStockout: {type: [integer, 'null'], minimum: 0}
-        recommendedQuantity: {type: string, pattern: '^(0|[1-9]\d*)(\.\d{1,2})?$', description: 额外采购量；以 Order By 到货后的 R 自然日覆盖期、Minimum Quantity、采购单位和起订量计算。}
+        recommendedQuantity: {type: string, pattern: '^(0|[1-9]\d*)\.00$', description: 额外采购量；按 Order By 到货后的 R 自然日覆盖期和 Minimum Quantity 计算，在商品库存/采购单位中向上取整到完整单位，以两位小数字符串返回。containedQuantity 仅描述单位内含物，不参与换算；MVP 无独立包装倍数或起订量。}
         orderByDate: {type: string, format: date, examples: ['2026-10-05'], description: 不早于今天、首个满足到货时规划剩余量不高于 Minimum Quantity 的周一至周五当地日期；工作日已触线则今天，2026-10-03 周六已触线则为 2026-10-05 周一。}
         leadTimeBusinessDays: {type: integer, minimum: 0, description: 历史样本按诊所当地日期，从下单日之后到首次正收货日（含）计周一至周五；跨当地日期至少计 1 个营业日，同当地日期可为 0。至少三笔取中位数，半天中位数向上取整。}
         leadTimeSource: {type: string, enum: [clinic_history, default_five_business_days]}
@@ -4857,7 +4857,7 @@ components:
         riskHorizonDays: {type: integer, const: 30}
         baselineThroughDate: {type: [string, 'null'], format: date, description: 消耗率基线截止当地日期；正常为昨天。}
         baselineStatus: {type: string, enum: [current, stale, missing], description: 定时作业失败且旧基线可读时标 stale；无基线时标 missing，不扫描历史活动补算。}
-        projectionStatus: {type: string, enum: [available, partial, stale, unavailable], description: 任何 SKU 历史或单位不可用时为 partial；全量无法计算时为 unavailable，风险计数和金额均为 null。}
+        projectionStatus: {type: string, enum: [available, partial, stale, unavailable], description: 任何 SKU 历史不可用时为 partial；全量无法计算时为 unavailable，风险计数和金额均为 null。}
         stateReadAt: {type: string, format: date-time, description: 本次实时库存、Ordered/received、Purchase Status 和价格读取时间，包含 offset。}
         summary:
           type: object
@@ -4892,7 +4892,7 @@ components:
             required: [inventoryItemId, reason]
             properties:
               inventoryItemId: {type: string, format: uuid}
-              reason: {type: string, enum: [fewer_than_60_calendar_days, fewer_than_4_positive_weeks, baseline_missing, baseline_stale, unit_conversion_unavailable]}
+              reason: {type: string, enum: [fewer_than_28_calendar_days, fewer_than_2_positive_weeks, baseline_missing, baseline_stale]}
         recommendedOrderTiming:
           type: object
           required: [days]
@@ -4993,7 +4993,7 @@ components:
           offset: 0
           items: []
         unavailableItems:
-        - {inventoryItemId: 8e41d6c8-b0ce-49de-aa8a-eef2f0da7322, reason: fewer_than_60_calendar_days}
+        - {inventoryItemId: 8e41d6c8-b0ce-49de-aa8a-eef2f0da7322, reason: fewer_than_28_calendar_days}
         recommendedOrderTiming: {days: []}
     Notification:
       description: 正文及商品名为生成时快照；readAt 与 resolvedAt 独立。resolvedAt 表示异常周期结束，不提供手动 Resolve 或库存细分状态标签。
