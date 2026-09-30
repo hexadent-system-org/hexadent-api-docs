@@ -2014,7 +2014,7 @@ paths:
       tags: [Analytics]
       operationId: getForecastedBuyingNeeds
       summary: 获取未来 30 天采购需求、三张指标和下单日历
-      description: 所有 active Member 可读，仅当前组织。风险窗口和 Order By 范围固定为 [今天, 今天+30 个诊所当地自然日)；Order By 仅为周一至周五，周末已触线则取下一个周一。coverageDays 只改变额外采购量与预算。汇总和日历按全部符合条件的 SKU 计算，不受分页影响。请求只读取每日消耗率基线与实时库存、采购快照，不扫描历史活动。详见 analytics-contract.md。
+      description: 所有 active Member 可读，仅当前组织。风险窗口和 Order By 范围固定为 [今天, 今天+30 个诊所当地自然日)；Order By 仅为周一至周五，周末已触线则取下一个周一。coverageDays 只改变额外采购量与预算。风险及日期参数仅筛选表格行，先取交集再按稳定顺序分页；汇总、金额和日历按全部符合条件的 SKU 计算，不受筛选或分页影响。请求只读取每日消耗率基线与实时库存、采购快照，不扫描历史活动。详见 analytics-contract.md。
       parameters:
       - name: coverageDays
         in: query
@@ -2034,6 +2034,11 @@ paths:
         required: false
         description: 仅筛选表格行，用于点击日历后定位；汇总和日历不受影响。
         schema: {type: string, format: date}
+      - name: riskType
+        in: query
+        required: false
+        description: 仅筛选表格行；reorder 与 stockout 分别使用对应顶部风险计数的 30 天谓词，可与 orderByDate 取交集。无效值返回 422；汇总、金额和日历不受影响。
+        schema: {type: string, enum: [reorder, stockout]}
       responses:
         '200':
           description: 同一次组织范围投影的指标、表格和日历。
@@ -4874,15 +4879,16 @@ components:
                 unpricedItemCount: {type: integer, minimum: 0}
         forecastedBuyingNeeds:
           type: object
-          required: [totalItems, limit, offset, items]
+          required: [totalItems, filteredTotalItems, limit, offset, items]
           properties:
-            totalItems: {type: integer, minimum: 0, description: 'Order By 在 [今天, 今天+30自然日) 的额外需要购买 SKU 去重数量，不受分页或 orderByDate 筛选影响。'}
+            totalItems: {type: integer, minimum: 0, description: 'Order By 在 [今天, 今天+30自然日) 的额外需要购买 SKU 去重数量，不受 riskType、orderByDate 或分页影响。'}
+            filteredTotalItems: {type: integer, minimum: 0, description: '依次按 orderByDate 与 riskType 筛选后的表格行数，在 offset/limit 分页前计算；两项筛选均省略时等于 totalItems。'}
             limit: {type: integer, minimum: 1, maximum: 100}
             offset: {type: integer, minimum: 0}
             items:
               type: array
               maxItems: 100
-              description: 先按 orderByDate、预计缺货日期、商品名和 inventoryItemId 稳定排序；仅表格受日期筛选与分页影响。
+              description: 先按 orderByDate、预计缺货日期、商品名和 inventoryItemId 稳定排序，再按日期及风险条件取交集并分页；预测日期非空且早于 30 天窗口末日即符合相应风险，包含已逾期日期；两种风险可重叠。仅表格受筛选与分页影响。
               items: {$ref: '#/components/schemas/AnalyticsForecastItem'}
         unavailableItems:
           type: array
@@ -4922,6 +4928,7 @@ components:
           priceCoverage: {pricedItemCount: 1, unpricedItemCount: 1}
         forecastedBuyingNeeds:
           totalItems: 2
+          filteredTotalItems: 2
           limit: 50
           offset: 0
           items:
@@ -4989,6 +4996,7 @@ components:
           priceCoverage: {pricedItemCount: 0, unpricedItemCount: 0}
         forecastedBuyingNeeds:
           totalItems: 0
+          filteredTotalItems: 0
           limit: 50
           offset: 0
           items: []

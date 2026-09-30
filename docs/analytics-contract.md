@@ -45,8 +45,23 @@ changing coverage changes recommended quantities and spend, not risk counts.
 The table contains only SKUs with an additional recommended purchase greater
 than zero and `orderByDate` in the half-open 30-day window
 `[today, today + 30 calendar days)`; risk sets may overlap. Summary and calendar cover all matching
-SKUs, regardless of pagination or an optional order-date filter. Each row is
+SKUs, regardless of table filters or pagination. The optional `riskType` accepts
+`reorder` or `stockout` and filters only table rows. A row matches when its
+corresponding predicted date is present and before the exclusive end of the
+30-day horizon; an overdue predicted date still matches. This is the same
+predicate used by the corresponding summary count, so one row can match both
+risk types. When `orderByDate` is also supplied, the table uses the intersection
+of the date and risk filters. Rows retain their stable order before `offset`
+and `limit` are applied (default 50, maximum 100). `totalItems` counts all
+eligible Buying Needs rows before either filter; `filteredTotalItems` counts
+matching rows before pagination. Without filters, the two counts are equal.
+The summary, spend and calendar remain based on all eligible rows. Each row is
 keyed by `inventoryItemId` and labels its inventory quantity unit.
+For the first OpenAPI response example, `riskType=stockout` returns only the
+gloves row with `totalItems=2` and `filteredTotalItems=1`; the summary still
+reports two reorder risks, one stockout risk, and the full spend. Adding
+`orderByDate=2026-09-29` returns no table rows and `filteredTotalItems=0` while
+those summary and calendar values remain unchanged.
 
 For each item, `A = currentStock + incomingStock`, where incoming is the sum of
 `max(plannedQuantity - receivedQuantity, 0)` across Ordered purchase-list
