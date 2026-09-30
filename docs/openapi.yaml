@@ -1342,7 +1342,7 @@ paths:
               - draftItemId: 44444444-4444-4444-8444-444444444444
                 expectedVersion: 3
       responses:
-        '201': {description: 新建且不可编辑的 Approved Purchase List, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
+        '201': {description: 新建 Approved Purchase List；仅清单名称和备注可在 Approved 状态编辑, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
         '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '403': {description: actor 或 selected approver 不满足权限要求, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '404': {description: 任一资源在当前 Organization 下不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
@@ -1365,6 +1365,25 @@ paths:
         '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '403': {description: Membership 或 Organization 不允许访问, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '404': {description: 当前 Organization 下不存在；跨租户 ID 同样返回 404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+    patch:
+      tags: [Purchase Lists]
+      operationId: updateApprovedPurchaseList
+      summary: 编辑 Approved Purchase List 的名称和备注
+      description: 所有 active Member 可执行。仅 Approved 状态可修改清单 name 和 notes；至少提供一个可编辑字段。name 经 NFKC 和连续空白折叠后不能为空，notes 可设为 null 清空。必须提交当前 expectedListVersion；成功后 list version 与 updatedAt 更新。item 集合、item snapshots/versions、审批人和审批时间均不变。Ordered、Completed、Cancelled 状态及过期版本返回 409；跨租户 ID 与不存在一致返回 404。
+      parameters: [*id008]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseListMetadataUpdateRequest'}
+            example: {expectedListVersion: 2, name: September restorative order, notes: Updated delivery instructions}
+      responses:
+        '200': {description: 更新后的 Purchase List 与未改变的 item snapshots, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
+        '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下不存在；跨租户 ID 同样返回 404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List state 或 version 冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 字段未通过校验或未提供可编辑字段, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-lists/{purchaseListId}/order:
     post:
       tags: [Purchase Lists]
@@ -4157,6 +4176,15 @@ components:
       required: [expectedListVersion]
       properties:
         expectedListVersion: {type: integer, minimum: 1}
+    PurchaseListMetadataUpdateRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [expectedListVersion]
+      properties:
+        expectedListVersion: {type: integer, minimum: 1}
+        name: {type: string, minLength: 1, maxLength: 200, description: NFKC 与连续空白折叠后不能为空}
+        notes: {type: [string, 'null'], maxLength: 2000, description: null 清空备注；省略则保持不变}
     PurchaseListCancellationRequest:
       type: object
       additionalProperties: false
