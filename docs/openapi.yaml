@@ -1202,7 +1202,7 @@ paths:
       tags: [Purchase Lists]
       operationId: listPurchaseDraftItems
       summary: 查询 Organization shared Purchase Draft
-      description: 所有 active Member 可读。默认按 `updatedAt DESC, id DESC` 稳定排序；分页期间数据变化时客户端应从第一页刷新。
+      description: 所有 active Member 可读。`quantityOnHand` 是读取时 Inventory 的当前库存数量，不扣除 Draft 的 `plannedQuantity`，也不计入尚未收货的 incoming stock；它不是加入 Draft 时的快照。`priority` 是用户设置的采购优先级，null 表示未标记；不由库存状态或 Buying Needs 自动计算。默认按 `updatedAt DESC, id DESC` 稳定排序；分页期间数据变化时客户端应从第一页刷新。
       parameters:
       - name: keyword
         in: query
@@ -1227,7 +1227,7 @@ paths:
       tags: [Purchase Lists]
       operationId: addPurchaseDraftItems
       summary: 批量加入 shared Purchase Draft
-      description: 所有 active Member 可写。每次请求最多 100 items；每个 `plannedQuantity` 最大为 `999999.99`。超过上限返回 `REQUEST_VALIDATION_ERROR` 422；请求全有或全无，任何 422 都不写入。每个 Inventory Item 在 Draft 最多一行。已存在项不会累加，成功响应返回其当前 item 与 version。同一请求重复 `inventoryItemId`（即使其他字段不同）返回 `REQUEST_VALIDATION_ERROR` 422，整批不写入。
+      description: 所有 active Member 可写。每次请求最多 100 items；每个 `plannedQuantity` 最大为 `999999.99`。每行可选传用户设置的 `priority`（low、medium、high）；省略或显式 null 均保存为 null，表示未标记，不自动分配档位。枚举外的非空值返回 `REQUEST_VALIDATION_ERROR` 422。请求全有或全无，任何 422 都不写入。每个 Inventory Item 在 Draft 最多一行。已存在项不会累加，也不会被请求中的 priority 或其他字段覆盖；成功响应返回其当前 item 与 version。需要修改已有行时使用带 `expectedVersion` 的 PATCH。同一请求重复 `inventoryItemId`（即使其他字段不同）返回 `REQUEST_VALIDATION_ERROR` 422，整批不写入。
       parameters: [*id006]
       requestBody:
         required: true
@@ -1238,6 +1238,7 @@ paths:
               items:
               - inventoryItemId: 11111111-1111-4111-8111-111111111111
                 plannedQuantity: '5.00'
+                priority: high
                 vendor: K-Dental
                 vendorItemNumber: KD-49135
                 unitPrice: '45.00'
@@ -1264,7 +1265,7 @@ paths:
       tags: [Purchase Lists]
       operationId: updatePurchaseDraftItem
       summary: 更新 shared Draft item
-      description: '`plannedQuantity` 是保存后的最终 total，不是 delta，最大为 `999999.99`；未提供的可选字段保持不变，显式 null 清空可空字段。首次执行新的幂等请求时先校验 `expectedVersion`；stale version 即使提交值与当前值相同也返回 `PURCHASE_DRAFT_VERSION_CONFLICT`。只有当前 version 且提交值与当前持久化值相同时返回当前 item，`version` 和 `updatedAt` 不变；该 200 no-op 会完成幂等记录。已完成的相同 key 与 material payload 重试回放原结果。'
+      description: '`plannedQuantity` 是保存后的最终 total，不是 delta，最大为 `999999.99`；可单独将用户设置的 `priority` 改为 low、medium、high，或显式传 null 清空标记。省略 priority 时保持原值；其他未提供的可选字段同样保持不变，显式 null 仅清空可空字段。首次执行新的幂等请求时先校验 `expectedVersion`；stale version 即使提交值与当前值相同也返回 `PURCHASE_DRAFT_VERSION_CONFLICT`。只有当前 version 且提交值与当前持久化值相同时返回当前 item，`version` 和 `updatedAt` 不变；该 200 no-op 会完成幂等记录。已完成的相同 key 与 material payload 重试回放原结果。'
       parameters:
       - &id007
         name: draftItemId
@@ -1277,6 +1278,7 @@ paths:
         content:
           application/json:
             schema: {$ref: '#/components/schemas/PurchaseDraftItemUpdateRequest'}
+            example: {expectedVersion: 3, priority: null}
       responses:
         '200': {description: 更新后的 Draft item, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseDraftItem'}}}}
         '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
@@ -1406,7 +1408,7 @@ paths:
       tags: [Purchase Lists]
       operationId: cancelPurchaseList
       summary: 取消未收货的 Approved List
-      description: 所有 active Member 可执行。仅 Approved 且没有 receipt history 时允许；保留 Cancelled snapshot，并在同一事务把 planned quantities 恢复到 shared Draft。若 Inventory Item 已有 Draft row，只累加 plannedQuantity 并保留该 row 当前的 vendor、vendorItemNumber、unitPrice 和 notes；合计超过 `999999.99` 时返回 409，用户需先减少当前 Draft quantity。若没有 Draft row，则从 Cancelled item snapshot 初始化 metadata；为了兼容上限生效前的不可变历史 snapshot，此恢复可保留超过当前输入上限的旧值，用户之后只能将其修改到 `999999.99` 以内。任一失败均不产生部分写入。
+      description: 所有 active Member 可执行。仅 Approved 且没有 receipt history 时允许；保留 Cancelled snapshot，并在同一事务把 planned quantities 恢复到 shared Draft。若 Inventory Item 已有 Draft row，只累加 plannedQuantity，并保留该 row 当前的 vendor、vendorItemNumber、unitPrice、notes 和 priority（包括 null）；合计超过 `999999.99` 时返回 409，用户需先减少当前 Draft quantity。若没有 Draft row，则从 Cancelled item snapshot 初始化 metadata，新 Draft row 的 priority 为 null，不自动标记；为了兼容上限生效前的不可变历史 snapshot，此恢复可保留超过当前输入上限的旧值，用户之后只能将其修改到 `999999.99` 以内。任一失败均不产生部分写入。
       parameters: [*id008, *id006]
       requestBody:
         required: true
@@ -3925,7 +3927,7 @@ components:
         role: {type: string, enum: [admin, manager, member]}
     PurchaseDraftItem:
       type: object
-      required: [id, inventoryItemId, productName, brandName, specification, unitName, quantityOnHand, plannedQuantity, vendor, vendorItemNumber, unitPrice, notes, incomingSummary, version, createdAt, updatedAt]
+      required: [id, inventoryItemId, productName, brandName, specification, unitName, quantityOnHand, plannedQuantity, priority, vendor, vendorItemNumber, unitPrice, notes, incomingSummary, version, createdAt, updatedAt]
       properties:
         id: *id001
         inventoryItemId: *id001
@@ -3936,8 +3938,14 @@ components:
         barcode: *id013
         specification: *id013
         unitName: {type: string}
-        quantityOnHand: *id014
+        quantityOnHand:
+          allOf: [*id014]
+          description: 读取 Draft 时对应 Inventory Item 的当前库存数量；不扣 Draft plannedQuantity 或未收货的 incoming stock，不是 Draft 快照。
         plannedQuantity: *id015
+        priority:
+          type: [string, 'null']
+          enum: [low, medium, high, null]
+          description: 用户设置的采购优先级；null 表示未标记。独立于库存状态和 Buying Needs 自动推断的优先级。
         vendor: {type: [string, 'null'], maxLength: 160}
         vendorItemNumber: {type: [string, 'null'], maxLength: 160}
         unitPrice: {anyOf: [*id014, {type: 'null'}]}
@@ -3966,6 +3974,7 @@ components:
         unitName: Box
         quantityOnHand: '8.00'
         plannedQuantity: '5.00'
+        priority: high
         vendor: K-Dental
         vendorItemNumber: KD-49135
         unitPrice: '45.00'
@@ -3987,6 +3996,10 @@ components:
       properties:
         inventoryItemId: *id001
         plannedQuantity: {$ref: '#/components/schemas/PurchaseQuantityInput'}
+        priority:
+          type: [string, 'null']
+          enum: [low, medium, high, null]
+          description: 用户可选的采购优先级；省略或显式 null 均保存为 null，不自动标记。其他值无效。
         vendor: {type: [string, 'null'], maxLength: 160}
         vendorItemNumber: {type: [string, 'null'], maxLength: 160}
         unitPrice: {anyOf: [*id014, {type: 'null'}]}
@@ -4021,6 +4034,10 @@ components:
       properties:
         expectedVersion: {type: integer, minimum: 1}
         plannedQuantity: {$ref: '#/components/schemas/PurchaseQuantityInput'}
+        priority:
+          type: [string, 'null']
+          enum: [low, medium, high, null]
+          description: 用户设置的采购优先级；可单独修改。省略时保持原值，显式 null 清空标记。
         vendor: {type: [string, 'null'], maxLength: 160}
         vendorItemNumber: {type: [string, 'null'], maxLength: 160}
         unitPrice: {anyOf: [*id014, {type: 'null'}]}
