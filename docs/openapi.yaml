@@ -1310,7 +1310,7 @@ paths:
       tags: [Purchase Lists]
       operationId: listPurchaseLists
       summary: 查询 Purchase Lists
-      description: 所有 active Member 可读。Cancelled 不出现在 MVP 列表。每个分页条目的 `previewItems` 返回该清单的全部商品快照，不按商品数截断；仅此分页列表条目包含预览。`keyword` 先做 Unicode NFKC、连续空白折叠和大小写归一化，再仅对 List name 做包含搜索；notes 和 item snapshot 字段不参与搜索。默认按 `updatedAt DESC, id DESC` 稳定排序。
+      description: 所有 active Member 可读。Cancelled 不出现在 MVP 列表。每个分页条目的 `previewItems` 返回该清单的全部商品快照，不按商品数截断；商品名下方的内容量由 `containedQuantity`、`containedUnitName` 和 `unitName` 表示，不使用自由文本 `specification`。仅此分页列表条目包含预览。`keyword` 先做 Unicode NFKC、连续空白折叠和大小写归一化，再仅对 List name 做包含搜索；notes 和 item snapshot 字段不参与搜索。默认按 `updatedAt DESC, id DESC` 稳定排序。
       parameters:
       - name: status
         in: query
@@ -4111,12 +4111,21 @@ components:
         updatedAt: {type: string, format: date-time}
     PurchaseListPreviewItem:
       type: object
-      description: 分页卡片所用的 Purchase List item 快照；字段来自清单商品行，不读取当前库存。
-      required: [id, productName, specification, plannedQuantity]
+      description: 分页卡片所用的 Purchase List item 快照；内容量在审批时从 Product 保存到清单商品行，不读取当前 Product 或库存。历史行缺少内容量快照时，containedQuantity 与 containedUnitName 均为 null。
+      required: [id, productName, containedQuantity, containedUnitName, unitName, plannedQuantity]
       properties:
         id: *id001
         productName: {type: string}
-        specification: *id013
+        containedQuantity:
+          type: [string, 'null']
+          pattern: ^[1-9]\d*(\.\d{1,4})?$|^0\.\d{1,4}$
+          description: 一个购买单位内包含的数量，decimal string；与 containedUnitName 同时为值或同时为 null。
+        containedUnitName:
+          type: [string, 'null']
+          description: 内容量单位，例如 pcs；与 containedQuantity 同时为值或同时为 null。
+        unitName:
+          type: string
+          description: 购买单位，例如 box；即使内容量未知也返回。
         plannedQuantity: *id015
     PurchaseListPageItem:
       description: 仅 `GET /purchase-lists` 的分页条目；继承原有 Summary 字段并增加全部商品预览。Dashboard 等 Summary 使用方没有 `previewItems` 契约。
@@ -4212,8 +4221,8 @@ components:
           createdAt: '2026-09-08T11:00:00-04:00'
           updatedAt: '2026-09-08T11:00:00-04:00'
           previewItems:
-          - {id: 77777777-7777-4777-8777-777777777777, productName: Nitrile Exam Gloves, specification: 100 / box, plannedQuantity: '5.00'}
-          - {id: 88888888-8888-4888-8888-888888888888, productName: Dental Bibs, specification: null, plannedQuantity: '2.00'}
+          - {id: 77777777-7777-4777-8777-777777777777, productName: Nitrile Exam Gloves, containedQuantity: '100.0000', containedUnitName: pcs, unitName: box, plannedQuantity: '5.00'}
+          - {id: 88888888-8888-4888-8888-888888888888, productName: Dental Bibs, containedQuantity: null, containedUnitName: null, unitName: box, plannedQuantity: '2.00'}
         pagination: {page: 1, pageSize: 20, totalItems: 1, totalPages: 1, hasNextPage: false, hasPreviousPage: false}
         counts: {approved: 1, ordered: 0, completed: 0}
     PurchaseListApprovalRequest:

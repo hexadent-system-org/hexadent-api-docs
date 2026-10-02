@@ -6,12 +6,20 @@ adds required `previewItems`. The array contains **every** item snapshot in
 that Purchase List, even when the client displays only a few rows on a card.
 The page still paginates Purchase Lists, not their preview items.
 
-Each preview item contains exactly the card data from the Purchase List item
-snapshot: `id`, `productName`, nullable `specification`, and
+Each preview item contains `id`, `productName`, nullable `containedQuantity`
+as a decimal string, nullable `containedUnitName`, `unitName`, and
 `plannedQuantity` as a decimal string. `id` identifies the Purchase List item
-row. `plannedQuantity` is the planned quantity saved on that row. The preview
-does not include current inventory stock, and a later product or inventory
-change does not rewrite the snapshot.
+row. `plannedQuantity` is the planned quantity saved on that row. The
+contained quantity and contained unit describe the amount within one purchase
+unit: for example, `100.0000` + `pcs` + `box` can display as `100 pcs / box`.
+`specification` is free text and is not used to derive this line.
+
+The contained quantity and unit name are saved from the Product when the list
+is approved. They are either both present or both null. For historical rows
+without these snapshots, both are null; the client can omit the content line.
+The purchase unit `unitName` still appears. The preview does not include
+current inventory stock, and later product or inventory changes do not rewrite
+the snapshot.
 
 `previewItems` belongs to the pagination-specific `PurchaseListPageItem` type.
 `PurchaseListSummary` remains the shared summary for detail and Dashboard
