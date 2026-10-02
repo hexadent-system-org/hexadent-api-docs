@@ -4054,7 +4054,7 @@ components:
       description: 大于等于零且不超过 999999.99 的累计实收数量；最多两位小数。
     PurchaseListItem:
       type: object
-      required: [id, inventoryItemId, productName, brandName, specification, unitName, plannedQuantity, receivedQuantity, remainingQuantity, varianceQuantity, receiptStatus, vendor, vendorItemNumber, unitPrice, notes, version]
+      required: [id, inventoryItemId, productName, brandName, specification, unitName, containedQuantity, containedUnitName, plannedQuantity, receivedQuantity, remainingQuantity, varianceQuantity, receiptStatus, vendor, vendorItemNumber, unitPrice, notes, version]
       properties:
         id: *id001
         inventoryItemId: *id001
@@ -4065,6 +4065,13 @@ components:
         barcode: *id013
         specification: *id013
         unitName: {type: string}
+        containedQuantity:
+          type: [string, 'null']
+          pattern: ^[1-9]\d*(\.\d{1,4})?$|^0\.\d{1,4}$
+          description: 审批时保存的每个 Purchase Unit 的内容数量；历史行可能为 null。
+        containedUnitName:
+          type: [string, 'null']
+          description: 内容量单位；与 containedQuantity 同时为值或同时为 null。
         plannedQuantity: *id015
         receivedQuantity: *id014
         remainingQuantity:
