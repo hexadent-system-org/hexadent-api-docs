@@ -43,7 +43,11 @@ API 负责提供面向用户的英文错误提示。客户端不得解析 `messa
 | `INVENTORY_VERSION_CONFLICT` | 409 | Inventory changed since it was last loaded. Refresh and try again. | 重新获取最新 Inventory Item；用户再次确认后才可使用新的 `version` 重试原操作。 |
 | `PURCHASE_DRAFT_VERSION_CONFLICT` | 409 | The purchase draft changed since it was last loaded. Refresh and try again. | 刷新 shared Draft；不得用旧 `expectedVersion` 自动重试 PATCH、DELETE 或 Approval。 |
 | `PURCHASE_LIST_VERSION_CONFLICT` | 409 | The purchase list changed since it was last loaded. Refresh and try again. | 刷新 List detail；用户再次触发操作时使用新的 List/Item version。 |
-| `PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED` | 409 | Review the receiving differences before completing this purchase list. | 从 `details.variance` 展示 zero/short/over summary；只有用户明确确认后才以新的 Idempotency-Key 和最新 version 重试。 |
+| `PURCHASE_LIST_ITEMS_PENDING` | 409 | Receive or cancel all pending items before completing this purchase list. | 刷新详情，展示未处理项；不得通过确认差异或自动重试绕过。 |
+| `PURCHASE_LIST_RECEIPT_SNAPSHOT_CONFLICT` | 409 | Receiving quantities changed. Review the latest information and confirm again. | 刷新全部 item versions，重新确认后用新 key 提交。 |
+| `PURCHASE_ITEM_CANCELLED` | 409 | Receiving has been cancelled for this item. | 刷新详情，隐藏/禁用 Receive、Correct received quantity 和 Cancel；不得自动恢复。 |
+| `PURCHASE_ITEM_NOT_CANCELLABLE` | 409 | This item has no pending quantity to cancel. | 刷新详情；已收齐或超收项不提供 Cancel。 |
+| `PURCHASE_DRAFT_CONFLICT` | 409 | API 根据具体 Draft 冲突返回安全提示。 | 刷新 Draft 并显示 message；退回数量超限时先减少现有 Draft，或重新确认不回 Draft。不得假定总有 overflow details，不自动重试；无部分写入。 |
 | `INVENTORY_PURCHASE_LIST_BLOCKED` | 409 | This item is still used by a purchase draft or open purchase list. | 展示 `details.blockers`，提供 Draft/List 入口并禁止移除 Inventory Item。 |
 | `REQUEST_VALIDATION_ERROR` | 422 | Please check the highlighted fields and try again. | 将 `fieldErrors` 映射到对应表单控件；无法映射的错误显示在表单级错误区域。 |
 
@@ -100,7 +104,10 @@ type FieldError = {
 
 - `PURCHASE_DRAFT_VERSION_CONFLICT`：`details.currentVersion`、`details.draftItemId`。
 - `PURCHASE_LIST_VERSION_CONFLICT`：`details.resourceType`（`purchase_list|purchase_list_item|inventory_item`）、`details.resourceId`、`details.currentVersion`。
-- `PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED`：`details.variance` 包含 `zeroReceivedItemCount`、`shortItemCount`、`overItemCount` 和 items；每个 item 包含 `purchaseListItemId`、planned/received/variance quantity 与 `receiptStatus`。
+- `PURCHASE_LIST_ITEMS_PENDING`：`details.pendingItemCount` 与 `details.purchaseListItemIds`，只包含当前组织未取消且实收少于订购的项。
+- `PURCHASE_ITEM_CANCELLED` / `PURCHASE_ITEM_NOT_CANCELLABLE`：`details.purchaseListItemId`。
+- `PURCHASE_DRAFT_CONFLICT`：通用 Draft 冲突可无 details；仅已有 Draft 合并超限时提供 `details.draftItemId`、`details.inventoryItemId`、`details.currentPlannedQuantity`、`details.restoredPlannedQuantity`、`details.maximumPlannedQuantity`，数量为 decimal string。
+- `PURCHASE_LIST_RECEIPT_SNAPSHOT_CONFLICT`：刷新详情，不依赖额外 details。
 - `INVENTORY_PURCHASE_LIST_BLOCKED`：`details.blockers[]` 包含 `sourceType`（`draft|approved|ordered`）、`sourceId` 和安全的 `displayName`。
 - `PURCHASE_CORRECTION_NEGATIVE_INVENTORY`：`details.inventoryItemId`、`details.currentInventoryQuantity`、`details.currentTotalReceived`、`details.minimumAllowedTotalReceived`。
 - `IDEMPOTENCY_CONFLICT`：`details.operation`；不得返回内部 fingerprint、原 payload 或其他用户数据。
@@ -127,8 +134,11 @@ function handleApiError(error: ApiError) {
     case "PURCHASE_DRAFT_VERSION_CONFLICT":
     case "PURCHASE_LIST_VERSION_CONFLICT":
       return refreshPurchaseDataAndRequestConfirmation();
-    case "PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED":
-      return showPurchaseVarianceConfirmation(error.details?.variance);
+    case "PURCHASE_LIST_ITEMS_PENDING":
+    case "PURCHASE_LIST_RECEIPT_SNAPSHOT_CONFLICT":
+    case "PURCHASE_ITEM_CANCELLED":
+    case "PURCHASE_ITEM_NOT_CANCELLABLE":
+      return refreshPurchaseDataAndRequestConfirmation();
     case "INVENTORY_PURCHASE_LIST_BLOCKED":
       return showPurchaseBlockers(error.details?.blockers);
     case "REQUEST_VALIDATION_ERROR":
