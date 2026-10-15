@@ -1549,14 +1549,14 @@ paths:
       tags: [Purchase Lists]
       operationId: cancelPurchaseListItem
       summary: 取消 Ordered item 的剩余收货
-      description: 所有 active Member 可执行，Organization 从认证上下文确定。仅 Ordered、未取消且 receivedQuantity < plannedQuantity 的 item 可操作。锁定 List 和 item 后检查版本，取消全部未收货数量；保留 item、planned/received 和 receipt history，不调整 Inventory，不生成 receipt event 或 Inventory Activity，不自动 Complete。只增加 item version，List lifecycle version 保持不变。returnToDraft 默认 false；为 true 时与取消在同一事务创建或合并 shared Draft，只增加本次未收货数量。新建 Draft 的 submittedByName 来自 item 快照，vendor、vendorItemNumber、unitPrice、notes、priority 均为 null；已有同商品 Draft 先比较提交人，姓名不同或仅一方为空时返回 PURCHASE_DRAFT_SUBMITTER_CONFLICT，取消标记和 Draft 均不提交；同名或双方为空才增加数量，保留所有 metadata（含 vendor）。合计超过 999999.99 返回 PURCHASE_DRAFT_CONFLICT 并全部回滚。复用既有组织/操作级幂等机制；同 key/同 payload 返回原结果，不重复退回，不因后续 Complete 失去重放能力；同 key/不同 payload 冲突。其他 key 再取消已取消项返回 PURCHASE_ITEM_CANCELLED。取消后禁止 Receive、Correction 和恢复。日志记录取消数量、操作者、List/item、是否回 Draft 和结果；不新增来源关联。
+      description: 所有 active Member 可执行，Organization 从认证上下文确定。仅 Ordered、未取消且 receivedQuantity < plannedQuantity 的 item 可操作。锁定 List 和 item 后检查版本，取消全部未收货数量；reason 必填，trim 后 1–500 字符，与取消标记和 Draft 同事务保存，不复制到 Draft，不允许取消后编辑。保留 item、planned/received 和 receipt history，不调整 Inventory，不生成 receipt event 或 Inventory Activity，不自动 Complete。只增加 item version，List lifecycle version 保持不变。returnToDraft 默认 false；为 true 时与取消在同一事务创建或合并 shared Draft，只增加本次未收货数量。新建 Draft 的 submittedByName 来自 item 快照，vendor、vendorItemNumber、unitPrice、notes、priority 均为 null；已有同商品 Draft 先比较提交人，姓名不同或仅一方为空时返回 PURCHASE_DRAFT_SUBMITTER_CONFLICT，取消标记和 Draft 均不提交；同名或双方为空才增加数量，保留所有 metadata（含 vendor）。合计超过 999999.99 返回 PURCHASE_DRAFT_CONFLICT 并全部回滚。复用既有组织/操作级幂等机制；同 key/同 payload 返回原结果，不重复退回，不因后续 Complete 失去重放能力；同 key/不同 payload（包括规范化 reason 不同）冲突；首尾空白不同但 trim 后原因相同视为同一 reason。旧客户端缺 reason 的新请求返回 422；历史成功重放见单项取消文档。其他 key 再取消已取消项返回 PURCHASE_ITEM_CANCELLED。取消后禁止 Receive、Correction 和恢复。日志记录取消数量、操作者、List/item、是否回 Draft 和结果；不新增来源关联。
       parameters: [*id009, *id006]
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/PurchaseListItemCancellationRequest'}
-            example: {expectedListVersion: 2, expectedItemVersion: 3, returnToDraft: false}
+            example: {expectedListVersion: 2, expectedItemVersion: 3, reason: Vendor cannot supply the remaining quantity., returnToDraft: false}
       responses:
         '200': {description: 更新后的 List、item 与可选 Draft 结果, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListItemCancellationResult'}}}}
         '401': {description: Access Token 缺失、无效或过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
@@ -1582,7 +1582,7 @@ paths:
                         draftItemId: 44444444-4444-4444-8444-444444444444
                         draftSubmittedByName: Alice
                         returningSubmittedByName: Bob
-        '422': {description: 请求未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: reason 缺失、null、trim 后为空或超过 500 字符，或其他请求字段未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '503': {description: 依赖不可用且没有部分写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /dashboard/inventory-summary:
     get:
@@ -4184,6 +4184,11 @@ components:
         cancelledQuantity:
           <<: *id014
           description: 未取消为 0；已取消为 plannedQuantity - receivedQuantity，由冻结数量推导，不新增数量字段。
+        cancellationReason:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 500
+          description: 已取消 item 的规范化原因；未取消或新增字段前的历史取消记录为 null。旧响应或历史幂等 payload 可缺省，新实现的实时 item 响应始终返回；取消后不可编辑。与 List 层同名字段独立。
         cancelledAt: {type: [string, 'null'], format: date-time}
         cancelledBy: {anyOf: [{$ref: '#/components/schemas/PurchaseActor'}, {type: 'null'}]}
         pendingQuantity:
@@ -4415,10 +4420,15 @@ components:
     PurchaseListItemCancellationRequest:
       type: object
       additionalProperties: false
-      required: [expectedListVersion, expectedItemVersion]
+      required: [expectedListVersion, expectedItemVersion, reason]
       properties:
         expectedListVersion: {type: integer, minimum: 1, maximum: 9223372036854775807}
         expectedItemVersion: {type: integer, minimum: 1, maximum: 9223372036854775807}
+        reason:
+          type: string
+          minLength: 1
+          pattern: '\S'
+          description: 必填取消原因；去除首尾空白后按 Unicode 字符数校验 1–500 字符并保存规范化值。不可为 null、空串或纯空白；不允许取消后编辑，不复制到 Draft。长度限制作用于 trim 后值。
         returnToDraft: {type: boolean, default: false}
     PurchaseListItemCancellationResult:
       type: object
