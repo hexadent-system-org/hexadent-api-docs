@@ -4211,7 +4211,11 @@ components:
         notes: {type: [string, 'null'], maxLength: 2000}
         status: {type: string, enum: [approved, ordered, completed, cancelled]}
         canComplete: {type: boolean, description: 仅 Ordered 且全部 items 已收齐/超收或已取消时为 true；其他状态为 false}
-        itemCount: {type: integer, minimum: 1}
+        itemCount: {type: integer, minimum: 1, description: 原订单商品行总数，包含已取消 item；商品明细和 Products total 继续使用此值。}
+        cancelledItemCount:
+          type: [integer, 'null']
+          minimum: 0
+          description: 单项 Cancelled 的 item 行数，不是取消数量，不由整单 status 推导。实时 summary/detail（含列表、Dashboard 与 mutation 内嵌 List）始终返回 0 至 itemCount 的整数；旧响应/历史幂等快照可缺省或 null，表示未知，不能默认视为 0。收货进度分母为 itemCount - cancelledItemCount，分子为 receiptCounts.received + receiptCounts.overReceived；分母为 0 时隐藏百分比/进度条并显示 No items to receive，取消项数单独显示。完整详情可从全部 items 的 isCancelled 精确推导，不能用 previewItems 或分页推断。
         receiptCounts:
           description: 保留按实际数量的原四类互斥计数，取消项仍按实际收货程度计入，不代表仍在等待。
           type: object
@@ -4277,6 +4281,7 @@ components:
         notes: Approved for weekly purchasing
         status: ordered
         itemCount: 1
+        cancelledItemCount: 0
         receiptCounts: {notReceived: 0, partiallyReceived: 1, received: 0, overReceived: 0}
         version: 2
         approvedBy: {membershipId: 33333333-3333-4333-8333-333333333333, displayName: Alex Chen, role: manager}
@@ -4334,6 +4339,7 @@ components:
           notes: Approved for weekly purchasing
           status: approved
           itemCount: 2
+          cancelledItemCount: 0
           receiptCounts: {notReceived: 2, partiallyReceived: 0, received: 0, overReceived: 0}
           version: 1
           approvedBy: {membershipId: 33333333-3333-4333-8333-333333333333, displayName: Alex Chen, role: manager}
