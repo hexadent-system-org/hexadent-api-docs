@@ -1428,17 +1428,17 @@ paths:
       tags: [Purchase Lists]
       operationId: completePurchaseList
       summary: 完成 Ordered Purchase List
-      description: 所有 active Member 可执行。允许 zero-received、short、exact 和 over；存在 variance 且 `confirmVariance=false` 时返回 `PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED` 与 summary。确认后只转换状态并写 audit，不调整 Inventory。
+      description: 所有 active Member 可执行。仅 Ordered 且所有 item 已收齐（含超收）或 isCancelled=true 时允许手动完成；仍有未取消的 short/zero item 时返回 PURCHASE_LIST_ITEMS_PENDING，不允许通过确认差异绕过。只转换状态并写 audit，不调整 Inventory。expectedItemVersions 可省略以兼容已有 API 客户端；提供时必须与当前全部 item versions 完全一致。已 Completed 返回原只读详情和 alreadyCompleted=true，不重开历史短收单。
       parameters: [*id008, *id006]
       requestBody:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListCompletionRequest'}}}
       responses:
-        '200': {description: Completed Purchase List, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
+        '200': {description: Completed Purchase List, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListCompletionResult'}}}}
         '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '404': {description: 当前 Organization 下不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
-        '409': {description: List state/version、variance confirmation 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List state/version、待收货 item、收货快照或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '422': {description: 请求未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-lists/{purchaseListId}/export:
     get:
@@ -1475,7 +1475,7 @@ paths:
       tags: [Purchase Lists]
       operationId: receivePurchaseListItem
       summary: 记录 Ordered item 的一次收货
-      description: 所有 active Member 可执行。`quantityReceived` 必须大于 0、最多两位小数且不超过 `999999.99`；允许 over-receipt。单一事务更新 Inventory 与 List Item，写入不可变 event 和 Inventory Activity。变更后的 Inventory `quantityOnHand` 不得超出 Inventory 支持范围。over-receipt 以成功响应中的结构化 warning 表达。
+      description: 所有 active Member 可执行。Cancelled item 拒绝新 Receive（PURCHASE_ITEM_CANCELLED）；已成功操作的同 key/同 payload 幂等重放仍返回原结果。`quantityReceived` 必须大于 0、最多两位小数且不超过 `999999.99`；允许 over-receipt。单一事务更新 Inventory 与 List Item，写入不可变 event 和 Inventory Activity。变更后的 Inventory `quantityOnHand` 不得超出 Inventory 支持范围。over-receipt 以成功响应中的结构化 warning 表达。
       parameters:
       - &id009
         name: itemId
@@ -1499,7 +1499,7 @@ paths:
       tags: [Purchase Lists]
       operationId: correctPurchaseListItemReceiptTotal
       summary: 设定 Ordered item 的累计实收总数
-      description: 所有 active Member 可执行。服务端锁定记录后以 `totalReceived - currentTotal` 计算 delta；total 可为 0，但不得超过 `999999.99`。相同 total 是 no-op，不创建 event/Activity，也不增加任何 version。非零 delta 原子调整 Inventory；变更后的 Inventory `quantityOnHand` 不得小于 0 或超出 Inventory 支持范围。
+      description: 所有 active Member 可执行。Cancelled item 拒绝新 Correction，包括相同 total 的 no-op（PURCHASE_ITEM_CANCELLED）；已成功操作的同 key/同 payload 幂等重放仍返回原结果。服务端锁定记录后以 `totalReceived - currentTotal` 计算 delta；total 可为 0，但不得超过 `999999.99`。相同 total 是 no-op，不创建 event/Activity，也不增加任何 version。非零 delta 原子调整 Inventory；变更后的 Inventory `quantityOnHand` 不得小于 0 或超出 Inventory 支持范围。
       parameters: [*id009, *id006]
       requestBody:
         required: true
@@ -1512,6 +1512,27 @@ paths:
         '409': {description: List state、item version、negative inventory 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '422': {description: total、变更后的 Inventory quantity、date 或 request field 未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '503': {description: Inventory Activity dependency 暂不可用且事务未写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+  /purchase-list-items/{itemId}/cancellation:
+    post:
+      tags: [Purchase Lists]
+      operationId: cancelPurchaseListItem
+      summary: 取消 Ordered item 的剩余收货
+      description: 所有 active Member 可执行，Organization 从认证上下文确定。仅 Ordered、未取消且 receivedQuantity < plannedQuantity 的 item 可操作。锁定 List 和 item 后检查版本，取消全部未收货数量；保留 item、planned/received 和 receipt history，不调整 Inventory，不生成 receipt event 或 Inventory Activity，不自动 Complete。只增加 item version，List lifecycle version 保持不变。returnToDraft 默认 false；为 true 时与取消在同一事务创建或合并 shared Draft，只增加本次未收货数量。新建 Draft 的 vendor、vendorItemNumber、unitPrice、notes、priority 均为 null；已有 Draft 仅增加数量，保留所有 metadata（含 vendor）。合计超过 999999.99 返回 PURCHASE_DRAFT_CONFLICT 并全部回滚。复用既有组织/操作级幂等机制；同 key/同 payload 返回原结果，不重复退回，不因后续 Complete 失去重放能力；同 key/不同 payload 冲突。其他 key 再取消已取消项返回 PURCHASE_ITEM_CANCELLED。取消后禁止 Receive、Correction 和恢复。日志记录取消数量、操作者、List/item、是否回 Draft 和结果；不新增来源关联。
+      parameters: [*id009, *id006]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseListItemCancellationRequest'}
+            example: {expectedListVersion: 2, expectedItemVersion: 3, returnToDraft: false}
+      responses:
+        '200': {description: 更新后的 List、item 与可选 Draft 结果, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListItemCancellationResult'}}}}
+        '401': {description: Access Token 缺失、无效或过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下 item 不存在；跨租户 ID 同样返回 404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List/item state/version、Draft 合并上限或幂等冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 请求未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '503': {description: 依赖不可用且没有部分写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /dashboard/inventory-summary:
     get:
       tags:
@@ -3951,8 +3972,8 @@ components:
         unitPrice: {anyOf: [*id014, {type: 'null'}]}
         notes: {type: [string, 'null'], maxLength: 2000}
         incomingSummary:
+          description: 现有在途清单的订购/实收历史仍保留；remainingQuantity 改为各项 pendingQuantity 总和，取消部分不再算待到货。listCount 仍为引用该商品的 Approved/Ordered 清单数。
           type: object
-          description: 该 Inventory Item 在 approved/ordered lists 中的 snapshot 汇总；不含 Draft 当前行。
           required: [listCount, plannedQuantity, receivedQuantity, remainingQuantity]
           properties:
             listCount: {type: integer, minimum: 0}
@@ -4081,6 +4102,15 @@ components:
           <<: *id016
           description: '`receivedQuantity - plannedQuantity`；shortfall 时为负数。'
         receiptStatus: {type: string, enum: [not_received, partially_received, received, over_received]}
+        isCancelled: {type: boolean, description: cancelledAt 非空时为 true；UI 优先显示 Cancelled，receiptStatus 仍表达实际收货程度}
+        cancelledQuantity:
+          <<: *id014
+          description: 未取消为 0；已取消为 plannedQuantity - receivedQuantity，由冻结数量推导，不新增数量字段。
+        cancelledAt: {type: [string, 'null'], format: date-time}
+        cancelledBy: {anyOf: [{$ref: '#/components/schemas/PurchaseActor'}, {type: 'null'}]}
+        pendingQuantity:
+          <<: *id014
+          description: 已取消为 0；否则 max(plannedQuantity - receivedQuantity, 0)。
         vendor: {type: [string, 'null']}
         vendorItemNumber: {type: [string, 'null']}
         unitPrice: {anyOf: [*id014, {type: 'null'}]}
@@ -4094,8 +4124,10 @@ components:
         name: {type: string, minLength: 1, maxLength: 200}
         notes: {type: [string, 'null'], maxLength: 2000}
         status: {type: string, enum: [approved, ordered, completed, cancelled]}
+        canComplete: {type: boolean, description: 仅 Ordered 且全部 items 已收齐/超收或已取消时为 true；其他状态为 false}
         itemCount: {type: integer, minimum: 1}
         receiptCounts:
+          description: 保留按实际数量的原四类互斥计数，取消项仍按实际收货程度计入，不代表仍在等待。
           type: object
           required: [notReceived, partiallyReceived, received, overReceived]
           properties:
@@ -4183,6 +4215,8 @@ components:
           barcode: null
           specification: 100 / box
           unitName: Box
+          containedQuantity: null
+          containedUnitName: null
           plannedQuantity: '5.00'
           receivedQuantity: '2.00'
           remainingQuantity: '3.00'
@@ -4286,15 +4320,47 @@ components:
             properties:
               disposition: {type: string, enum: [created, merged]}
               draftItem: {$ref: '#/components/schemas/PurchaseDraftItem'}
+    PurchaseListItemCancellationRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedListVersion, expectedItemVersion]
+      properties:
+        expectedListVersion: {type: integer, minimum: 1, maximum: 9223372036854775807}
+        expectedItemVersion: {type: integer, minimum: 1, maximum: 9223372036854775807}
+        returnToDraft: {type: boolean, default: false}
+    PurchaseListItemCancellationResult:
+      type: object
+      required: [purchaseList, purchaseListItem, restoredDraftItem]
+      properties:
+        purchaseList: {$ref: '#/components/schemas/PurchaseListDetail'}
+        purchaseListItem: {$ref: '#/components/schemas/PurchaseListItem'}
+        restoredDraftItem:
+          anyOf:
+          - type: object
+            required: [disposition, draftItem]
+            properties:
+              disposition: {type: string, enum: [created, merged]}
+              draftItem: {$ref: '#/components/schemas/PurchaseDraftItem'}
+          - type: 'null'
+    PurchaseListCompletionResult:
+      allOf:
+      - $ref: '#/components/schemas/PurchaseListDetail'
+      - type: object
+        required: [alreadyCompleted, message]
+        properties:
+          alreadyCompleted: {type: boolean}
+          message: {type: [string, 'null']}
     PurchaseListCompletionRequest:
       type: object
       additionalProperties: false
-      required: [expectedListVersion, confirmVariance]
+      required: [expectedListVersion]
       properties:
-        expectedListVersion: {type: integer, minimum: 1}
-        confirmVariance:
-          type: boolean
-          description: 有任何 zero/short/over variance 时必须为 true；exact-only List 可为 false。
+        expectedListVersion: {type: integer, minimum: 1, maximum: 9223372036854775807}
+        expectedItemVersions:
+          type: [object, 'null']
+          propertyNames: {type: string, format: uuid}
+          additionalProperties: {type: integer, minimum: 1, maximum: 9223372036854775807}
+          description: 新客户端提交所见全部 item ID/version；不一致返回 PURCHASE_LIST_RECEIPT_SNAPSHOT_CONFLICT。兼容旧 API 客户端时可省略。
     PurchaseReceiptRequest:
       type: object
       additionalProperties: false
@@ -4363,7 +4429,8 @@ components:
         warning: {anyOf: [{$ref: '#/components/schemas/PurchaseReceiptWarning'}, {type: 'null'}]}
     PurchaseListVarianceSummary:
       type: object
-      description: '`PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED` 的 `error.details.variance` shape。'
+      deprecated: true
+      description: 历史 variance confirmation shape，仅供旧记录参考；新 Complete 不返回此错误。
       required: [zeroReceivedItemCount, shortItemCount, overItemCount, items]
       properties:
         zeroReceivedItemCount: {type: integer, minimum: 0}
