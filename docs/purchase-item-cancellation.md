@@ -4,13 +4,38 @@
 
 ## 状态与数量
 
-- 新增 item 响应字段 `isCancelled`、`cancelledAt`、`cancelledBy`、`cancelledQuantity`、`pendingQuantity`、`cancellationReason`，List summary/detail 增加 `canComplete`。
+- 新增 item 响应字段 `isCancelled`、`cancelledAt`、`cancelledBy`、`cancelledQuantity`、`pendingQuantity`、`cancellationReason`，List summary/detail 增加 `canComplete` 和 `cancelledItemCount`。
 - 依赖优先发布期间这些响应属性在 schema 中是可选的；新 API 实现必须始终返回。旧响应/历史幂等 payload 缺失时按未取消处理（false/null/0），pendingQuantity 从当前数量推导；canComplete 从 List 状态和全部 items 推导，摘要没有 items 时等待服务端新字段，不凭分页数据判断。
 - 不扩展 `receiptStatus` 的四个枚举值，`receiptCounts` 继续按实际收货数量计数；取消项不等同于已收齐。UI 优先显示 Cancelled，同时保留 Received 6/10。
 - 未取消项：`cancelledQuantity=0`，`pendingQuantity=max(plannedQuantity-receivedQuantity,0)`。
 - 已取消项：`cancelledQuantity=plannedQuantity-receivedQuantity`，`pendingQuantity=0`。原订购和实收数量冻结，不允许新的 Receive 或 Correction（包括 no-op）。不提供恢复。
 - List 为 Ordered 且所有 item 已收齐/超收或取消时，`canComplete=true`，其他状态 false。取消不会自动完成 List。
 - Draft incomingSummary 的 planned/received/listCount 保留当前活跃单据历史口径；remainingQuantity 汇总 pendingQuantity。不可为排除取消部分而删除该行的已收货历史。Dashboard 原 receipt counts 保留实际收货口径；金额分析不在本次变更中改写。
+
+## 收货进度排除已取消项
+
+用户确认的新展示口径：取消项不计入收货进度的总 items，但保留订单原本的总项数、商品明细及真实收货记录。`receiptStatus` 与 `receiptCounts` 原有含义不变，不能把 Cancelled 伪装成 received，也不能删掉取消行来缩小 `itemCount`。
+
+- `itemCount`：订单全部商品行数，包括已取消行，商品列表总数继续使用。
+- `cancelledItemCount`：`cancelled_at` 非空的 item 行数，范围 0 至 itemCount；按 item 标记计算，与整单 Cancelled 状态、取消的 quantity 数量分开。无单项取消的历史行自然计为 0。
+- 收货进度有效总项数 = `itemCount - cancelledItemCount`。
+- 收齐项数 = `receiptCounts.received + receiptCounts.overReceived`；部分收货仍不计作收齐。取消项不能已收齐/超收，因此原分子无需改写。
+- 有效总项数大于 0：进度为收齐项数 / 有效总项数，百分比按最近整数四舍五入，与原页一致；取消项数大于 0 时单独显示，没有取消时不显示取消提示。
+- 有效总项数为 0（全部取消）：显示 `No items to receive · 3 items cancelled`（按实际数，单数用 `1 item cancelled`），隐藏百分比和进度条，不显示 0/0，也不把取消描述为 100% received。Complete 仍按原规则允许手动完成。
+
+以 3 项中 2 项收齐、1 项取消为例：
+
+| 位置 | 展示 |
+| --- | --- |
+| 列表卡片 | `2 of 2 items received`，100% 进度条；下方 `1 item cancelled` |
+| 详情收货进度 | `Receiving progress · 100%`，进度条下方 `2 of 2 items received · 1 item cancelled` |
+| 订单商品列表 | 仍为 `3 items`；取消行显示 Cancelled 和既有 Reason 入口 |
+
+实时列表、详情、Dashboard 的所有 PurchaseListSummary 投影和 mutation 内嵌 List 统一显式返回真实 `cancelledItemCount`，包括 Approved、Ordered、Completed。聚合沿用组织范围并复用已有查询，无 DB 新字段、迁移、回填或外部服务。取消成功后详情立即更新进度，刷新及返回列表后口径一致。
+
+兼容：OpenAPI 属性为可选且允许 null，便于旧响应及不可变历史幂等快照继续读取；新实时响应必须返回整数，不使用 null/默认 0 掩盖漏映射。未知字段时，完整详情可从全部 items 精确推导；摘要没有完整 items 则刷新最新数据，仍未知时不显示误导进度/取消项数，不能从商品预览或分页推断。历史 Completed 不重开，库存、金额、Draft incomingSummary、receiptCounts 和 canComplete 规则均不改变。API 优先部署确认后再发布使用新字段的 Web。
+
+验收使用既有诊所账户和可创建的 Ordered fixture，覆盖无取消、部分收货后取消、收齐与取消混合、全部取消（含单项）、超收、刷新及 mutation 结果；列表/详情/Dashboard 的计数一致。数据计数和旧快照兼容用 HTTP/隔离 PostgreSQL 自动化，卡片和详情展示由用户页面 QA；Mobile UI、金额报表、取消原因编辑均不扩展。本 Docs 任务无运行时或 DB 验证声明。
 
 ## Cancel
 
