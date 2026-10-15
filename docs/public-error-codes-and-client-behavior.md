@@ -47,6 +47,7 @@ API 负责提供面向用户的英文错误提示。客户端不得解析 `messa
 | `PURCHASE_LIST_RECEIPT_SNAPSHOT_CONFLICT` | 409 | Receiving quantities changed. Review the latest information and confirm again. | 刷新全部 item versions，重新确认后用新 key 提交。 |
 | `PURCHASE_ITEM_CANCELLED` | 409 | Receiving has been cancelled for this item. | 刷新详情，隐藏/禁用 Receive、Correct received quantity 和 Cancel；不得自动恢复。 |
 | `PURCHASE_ITEM_NOT_CANCELLABLE` | 409 | This item has no pending quantity to cancel. | 刷新详情；已收齐或超收项不提供 Cancel。 |
+| `PURCHASE_DRAFT_SUBMITTER_CONFLICT` | 409 | This product is already in Draft with a different submitter (Draft: Alice; returning item: Bob). Check Draft and confirm with the people involved before adjusting the quantity. | 显示双方姓名及去 Draft 检查/先沟通的指引；本次取消与退回均未提交。不自动覆盖姓名、修改数量或改为仅取消。Ordered item 可由用户主动确认不回 Draft 后用新 key 仅取消；Approved 整单取消没有此选项。 |
 | `PURCHASE_DRAFT_CONFLICT` | 409 | API 根据具体 Draft 冲突返回安全提示。 | 刷新 Draft 并显示 message；退回数量超限时先减少现有 Draft，或重新确认不回 Draft。不得假定总有 overflow details，不自动重试；无部分写入。 |
 | `INVENTORY_PURCHASE_LIST_BLOCKED` | 409 | This item is still used by a purchase draft or open purchase list. | 展示 `details.blockers`，提供 Draft/List 入口并禁止移除 Inventory Item。 |
 | `REQUEST_VALIDATION_ERROR` | 422 | Please check the highlighted fields and try again. | 将 `fieldErrors` 映射到对应表单控件；无法映射的错误显示在表单级错误区域。 |
@@ -106,6 +107,7 @@ type FieldError = {
 - `PURCHASE_LIST_VERSION_CONFLICT`：`details.resourceType`（`purchase_list|purchase_list_item|inventory_item`）、`details.resourceId`、`details.currentVersion`。
 - `PURCHASE_LIST_ITEMS_PENDING`：`details.pendingItemCount` 与 `details.purchaseListItemIds`，只包含当前组织未取消且实收少于订购的项。
 - `PURCHASE_ITEM_CANCELLED` / `PURCHASE_ITEM_NOT_CANCELLABLE`：`details.purchaseListItemId`。
+- `PURCHASE_DRAFT_SUBMITTER_CONFLICT`：必需的 `details.purchaseListId`、`details.purchaseListItemId`、`details.inventoryItemId`、`details.draftItemId`（均为当前组织 UUID），以及 `details.draftSubmittedByName`、`details.returningSubmittedByName`（string 或 null）。整单仅需返回首个冲突项，整单所有变更回滚；姓名单空也冲突，双空可合并。姓名按纯文本显示；message 中 null 可描述为 Not specified，普通 Draft 空值仍留空。不得将此错误当数量上限处理；完整示例及比较规则见 [业务姓名契约](purchase-actor-names.md)。
 - `PURCHASE_DRAFT_CONFLICT`：通用 Draft 冲突可无 details；仅已有 Draft 合并超限时提供 `details.draftItemId`、`details.inventoryItemId`、`details.currentPlannedQuantity`、`details.restoredPlannedQuantity`、`details.maximumPlannedQuantity`，数量为 decimal string。
 - `PURCHASE_LIST_RECEIPT_SNAPSHOT_CONFLICT`：刷新详情，不依赖额外 details。
 - `INVENTORY_PURCHASE_LIST_BLOCKED`：`details.blockers[]` 包含 `sourceType`（`draft|approved|ordered`）、`sourceId` 和安全的 `displayName`。
@@ -139,6 +141,8 @@ function handleApiError(error: ApiError) {
     case "PURCHASE_ITEM_CANCELLED":
     case "PURCHASE_ITEM_NOT_CANCELLABLE":
       return refreshPurchaseDataAndRequestConfirmation();
+    case "PURCHASE_DRAFT_SUBMITTER_CONFLICT":
+      return showDraftSubmitterConflict(error.message, error.details);
     case "INVENTORY_PURCHASE_LIST_BLOCKED":
       return showPurchaseBlockers(error.details?.blockers);
     case "REQUEST_VALIDATION_ERROR":

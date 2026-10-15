@@ -1,6 +1,6 @@
 # Purchase List item Cancel 与 Complete
 
-本契约替换未收齐仍可完成的旧规则。与 Approved 整单 cancellation 分开；原整单接口和 metadata 恢复规则保持不变。服务路径以 OpenAPI servers 为准（API 当前前缀 `/v1`）。
+本契约替换未收齐仍可完成的旧规则。与 Approved 整单 cancellation 分开；原整单接口和 metadata 恢复规则保持不变，但所有回 Draft 路径都增加 [提交人冲突检查](purchase-actor-names.md)。服务路径以 OpenAPI servers 为准（API 当前前缀 `/v1`）。
 
 ## 状态与数量
 
@@ -40,10 +40,11 @@
 ```
 
 - 不回 Draft：没有任何 Draft 写入。
-- 回 Draft：只增加本次剩余数量。已有商品 Draft 合并数量并保留 vendor、vendorItemNumber、unitPrice、notes、priority（包括 null）；新建仅携带商品与数量，以上 metadata 全部为空，待用户重新采购时填写。
+- 回 Draft：只增加本次剩余数量。已有同商品 Draft 必须先比较提交人，同名（按姓名规范化比较）或双方为空才合并数量，保留原提交人展示值及 vendor、vendorItemNumber、unitPrice、notes、priority（包括 null）；姓名不同或仅一方为空返回 PURCHASE_DRAFT_SUBMITTER_CONFLICT，取消和 Draft 均不提交。新建携带商品、数量及原 item 的 submittedByName 快照，以上采购 metadata 仍全部为空，待用户重新采购时填写。
+- 冲突提示包含双方姓名和 Draft 检查指引，复用已加载 item/Draft，无额外查询。用户可主动改为 returnToDraft=false 后用新 key 仅取消，不自动降级、不自动改数量/姓名；已收货和库存不受影响。Approved 整单取消仍强制回 Draft，不能用单项的“不回 Draft”方式绕过。
 - 当前商品 Draft 唯一性不变。数量合计超过 999999.99 时整次操作失败，取消标记和 Draft 均不提交；其他异常同样全部回滚。
 - 同 operation/key/payload 成功重放返回原响应，包含后续 List 已完成的情形，不重复增加数量；改变 payload 复用 key 返回 IDEMPOTENCY_CONFLICT。Receive/Correction 的历史成功请求也可重放，但取消后新 key 不允许变更。
-- 仅新增 nullable `cancelled_at`、`cancelled_by_member_id`，同组织成员外键与成对非空约束。不存 cancelled_quantity，不新建来源关联；取消本身不改 Inventory，不创建 receipt event/Inventory Activity。
+- 单项取消本身使用 nullable `cancelled_at`、`cancelled_by_member_id`，同组织成员外键与成对非空约束；后续业务姓名字段见上述姓名契约。不存 cancelled_quantity，不新建来源关联；取消本身不改 Inventory，不创建 receipt event/Inventory Activity。
 - 成功日志在提交后写入，记录组织/操作者、List/item、取消数量、是否回 Draft、Draft disposition/id、requestId 和结果。失败日志不能表述为成功；不输出凭证、内部 SQL 或敏感 payload。
 
 ## Complete 与客户端兼容
