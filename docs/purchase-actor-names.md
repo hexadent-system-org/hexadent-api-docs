@@ -6,25 +6,35 @@
 
 | 字段 | 含义 |
 | --- | --- |
-| Draft `submittedByName` | 用户登记的可选业务提交人，可修改或清空 |
+| Draft `submittedByName` | 直接新增时必填，修改时不可清空；历史读值可为 null |
 | List item `submittedByName` | 审批时复制的提交人快照，可为 null，之后不可修改 |
 | List `selectedApprover` | 必填业务审批人；选择有效成员或手填姓名，姓名保存为审批时快照 |
 | List `approvedBy` 与事件 actor | 实际执行请求的登录账号，由服务端认证上下文决定 |
 
 业务姓名只能证明当时登记了谁，不证明该人本人进行了认证操作。手填不改变权限、tenant 或成员身份。`PurchaseActor` 的非空 membershipId 和 role 契约不变；selectedApprover 使用独立 `PurchaseSelectedApprover`，手填时 membershipId/role 显式返回 null，displayName 不能空。
 
-姓名输入拒绝 CR/LF，trim、折叠连续空白并保留展示大小写；手填提交人和审批人最多 100 字符，schema 的 maxLength 也限制原始输入，不能靠 trim 绕过长度上限。提交人空白转 null；审批人空白返回 422。姓名冲突比较在同样空白规范化后仅将英文 A–Z 转小写，不做 NFKC、别名或身份推断；Alice 与 alice 相同，Alice 与 Alicia 不同。
+姓名输入拒绝 CR/LF，trim、折叠连续空白并保留展示大小写；手填提交人和审批人最多 100 字符，schema 的 maxLength 也限制原始输入，不能靠 trim 绕过长度上限。提交人与审批人的空白写入均返回 422；直接新增提交人不可缺省/null，PATCH 省略提交人表示不修改。旧存储、响应及历史退回仍可为 null，不做回填。姓名冲突比较在同样空白规范化后仅将英文 A–Z 转小写，不做 NFKC、别名或身份推断；Alice 与 alice 相同，Alice 与 Alicia 不同。
 
 现有 Profile 的 firstName/lastName 各允许 80 字符，成员完整姓名可能超过 100 字符。因此选择现有成员必须完整保存其合法姓名，不能截断或因手填上限拒绝该成员；审批人快照存储容量要覆盖现有成员姓名。100 字符上限用于自由文本输入，不缩小现有成员选择能力。
 
 ## Draft 添加、编辑与审批
 
-- 添加请求在每个 item 上携带可选 submittedByName；不传/null/空白为 null。Web 批量输入一次时为本次每个 item 复制该值，不需要新增批次级字段。
+- 添加请求每个 item 都必须携带非空 submittedByName；不传/null/空字符串/纯空白返回 REQUEST_VALIDATION_ERROR 422，整批不写入。Web 批量输入一次时为本次每个 item 复制该值，不需要新增批次级字段。
 - 已存在商品返回 existing/current item，数量和姓名都不覆盖；修改使用带 expectedVersion 的 PATCH。
-- PATCH 省略姓名不修改，null 或空白清空；规范化后的持久化值改变时更新真实 updatedBy、updatedAt 和 version。既有 no-op、stale-version 和幂等顺序保持不变。
+- PATCH 省略姓名不修改；显式 null、空字符串或纯空白返回 REQUEST_VALIDATION_ERROR 422，不能清空；规范化后的持久化值改变时更新真实 updatedBy、updatedAt 和 version。既有 no-op、stale-version 和幂等顺序保持不变。
 - Draft 普通单元格为空时留空，不显示“未填写”，不自动预填或记住上一次姓名。
 - Approve 校验全部 Draft version，原子复制提交人及审批人姓名快照并移除所选 Draft。之后修改账号姓名、Draft 或清单 name/notes，均不改快照。
 - 姓名/审批人选择属于 material request；改变姓名或输入方式不能复用成功请求的幂等 key。同 operation/key/material payload 的重试返回原结果。
+
+直接新增的有效 item（完整请求放在 `items` 数组中）：
+
+```json
+{"inventoryItemId":"11111111-1111-4111-8111-111111111111","plannedQuantity":"2.00","submittedByName":" Alice "}
+```
+
+在该 item 中省略 `submittedByName`，或设为 `null`、`""`、`"   "` 均无效；若批量中任一 item 无效，整批不写入。PATCH `{"expectedVersion":1,"notes":"Keep current submitter"}` 有效且不改姓名；PATCH `{"expectedVersion":1,"submittedByName":null}` 无效。历史空提交人仍可读取、删除、审批，或由历史商品退回时复制，不能以伪造姓名消除空值。
+
+Approve 不检查逐商品是否有提交人；旧 Draft 的空提交人仍可复制为 null 快照。审批人仍必须提供有效成员或非空手填姓名，不因商品缺提交人而额外拦截。
 
 Approve 保持现有成员请求有效：
 
@@ -117,9 +127,9 @@ Approve 保持现有成员请求有效：
 
 1. 本 Docs PR 先完成 lint/bundle、示例检查和独立审查；不修改运行时。
 2. API/DB 任务在既有三表加姓名/快照，selected_approver_member_id 允许 null，真实 approved_by/approved_at 必填且保持 FK。姓名快照加入不可变保护，Draft 商品唯一性不变。
-3. 无历史数据回填需求，但不能加必填快照字段后让 stable main/旧 API 的合法成员审批写入失败。执行 API 时明确兼容扩展迁移、姓名派生或等价方案并验证旧 ORM 写入；成员完整姓名不能被 VARCHAR(100) 截断。手填姓名非空由 API 与最终 DB 约束保证。
+3. 本次收紧直接 Draft 新增和显式改名输入，不新增 DB migration、NOT NULL 或历史回填；旧存储、快照和来源为空的取消退回仍可为 null。现有审批逻辑不新增逐商品提交人必填检查；成员完整姓名仍不能被 VARCHAR(100) 截断。
 4. 现有成员审批请求继续有效；原 actor 结构不放宽。新 API 返回 Draft/item submittedByName（null 也显式返回）。旧 API 响应和历史幂等 payload 缺此字段时，兼容读取按 null；成员审批响应保持 UUID/string role 形状，姓名从新快照读取。新成功 payload 记录快照；重放旧 payload 不冒充已有真实姓名快照，不执行数据回填。
 5. Web/Mobile 必须在启用手填前证明 selectedApprover 的 null membershipId/role 不会导致解析、筛选或展示崩溃。API 扩展先于 Web，但不能据此假定旧客户端天然兼容；若有严格解析器，先做独立兼容交付或阻止启用手填并记录依赖，不能静默扩展 Mobile UI 范围。API/Web/旧客户端兼容与实际部署候选由下游记录并由用户确认。
-6. Web 消费新 API 后交付用户页面 QA。回滚 Web/API 前验证已有手填快照可读、旧成员请求可写，保留所有已取消状态/姓名/Draft 数量；不能靠清字段或自动重复退回修复。
+6. 提交人必填是显式破坏性写入校验变更：旧 Web/Mobile 未传提交人的直接新增返回 422，包括缺字段旧新增幂等重放会先被请求验证拒绝。必须先准备所有支持客户端的适配或明确发布门禁，不能独立部署 API 后等待客户端；本契约不表示这些客户端已完成适配。旧读响应和旧成员审批输入仍兼容。Web 消费新 API 后交付用户页面 QA。回滚 Web/API 前验证已有手填快照可读、旧成员请求可写，保留所有已取消状态/姓名/Draft 数量；不能靠清字段或自动重复退回修复。
 
-文档校验覆盖 schema、正反示例及与取消/导出的口径一致性，不证明真实 API、PostgreSQL、PDF 渲染或页面通过。下游必测：提交人新增/修改/清空/重复添加及 stale-version；两种审批人与空/歧义输入；姓名快照与账号改名；退回四种分支、整单原子回滚、部分收货仅取消、并发/幂等/tenant；CSV 姓名注入与 PDF 字体限制；隔离库 migration round-trip 和 stable-main 写入兼容。
+文档校验覆盖 schema、正反示例及与取消/导出的口径一致性，不证明真实 API、PostgreSQL、PDF 渲染或页面通过。下游必测：提交人必填新增/修改/拒绝清空/重复添加及 stale-version；两种审批人与空/歧义输入；姓名快照与账号改名；退回四种分支、整单原子回滚、部分收货仅取消、并发/幂等/tenant；CSV 姓名注入与 PDF 字体限制；隔离库 migration round-trip 和 stable-main 写入兼容。
