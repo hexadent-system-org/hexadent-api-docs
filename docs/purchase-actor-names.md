@@ -111,7 +111,7 @@ Approve 保持现有成员请求有效：
 
 业务审批人统一显示 selectedApprover.displayName，包括创建确认/成功提示、清单列表/详情及 Dashboard；实际账号仍作为 approvedBy 保留。商品详情使用提交人快照，null 留空。
 
-仅 Approved 可导出；姓名和文件安全规则保持，Qty/Total Price按后续[订货确认契约](purchase-order-confirmation.md)使用订货量和有效单项金额。CSV 保持 BOM、单 header、无 metadata preamble；原七列顺序不变，末尾增加 Submitted By、Approved By，分别为 item 提交人快照与每行重复的业务审批人姓名。PDF 商品表末尾增加 Submitted By，页头 Approved By 使用业务审批人快照。两个新自由文本值均纳入既有 CSV formula-injection 防护及 PDF 字符支持检查；中文姓名可保存，但当前 PDF 字体不支持时仍返回 PDF_EXPORT_UNSUPPORTED_CHARACTERS 422 并可改用 CSV，不在本次引入字体或 PDF 引擎。
+仅 Approved 可导出；姓名和文件安全规则保持，完整列名与顺序以[订货确认契约](purchase-order-confirmation.md#read-surfaces-money-and-export)为准：同时展示 Requested Qty / Ordered Qty 与 Est. Total / Actual Total，并增加 Actual Total Reason，取代原 Qty / Total Price 列。CSV 保持 BOM、单 header、无 metadata preamble；末尾 Submitted By、Approved By 分别为 item 提交人快照与每行重复的业务审批人姓名。PDF 商品表保留 Submitted By，页头 Approved By 使用业务审批人快照。姓名和新增 Actual Total Reason 均纳入既有 CSV formula-injection 防护及 PDF 字符支持检查；中文姓名可保存，但当前 PDF 字体不支持时仍返回 PDF_EXPORT_UNSUPPORTED_CHARACTERS 422 并可改用 CSV，不在本次引入字体或 PDF 引擎。
 
 ## 发布、迁移与验证边界
 
