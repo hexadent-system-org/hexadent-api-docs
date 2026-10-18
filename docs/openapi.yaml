@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: HexaDent AI Inventory Platform API
-  version: 0.7.0
+  version: 0.7.1
   description: Web、iOS 与 Android MVP 的统一业务 API Contract。Purchase List 章节是 contract-first replacement，runtime 尚未实现。生产域名待定。
 servers:
 - url: /v1
@@ -1505,7 +1505,19 @@ paths:
       tags: [Purchase Lists]
       operationId: exportPurchaseList
       summary: 导出 Purchase List snapshot
-      description: 所有 active Member 仅可导出 Approved List，最多 1,000 items；移除商品不导出，空Approved导出CSV仅header、PDF保留页头及空表，商品数/合计为0；Ordered、Completed 和 Cancelled 均不可导出，并返回说明仅 Approved 可导出的 409。CSV 是带 BOM 的 UTF-8、RFC 4180 单一 header + data rows 表格，List name 只通过下载文件名表达，不添加 metadata preamble；为防止 spreadsheet formula injection，Vendor Item Number、Vendor、Description、Unit、Submitted By、Approved By 中忽略前导空白及 Unicode control/format 字符后以 `=`、`+`、`-`、`@` 开头的值会添加 apostrophe 安全前缀，机器消费者应以 `utf-8-sig` 解码并保留该转换。CSV header 固定为 Vendor Item Number、Vendor、Description、Unit、Qty、Unit Price、Total Price、Submitted By、Approved By；后两列分别取 item.submittedByName 快照（null 输出空单元格）和 selectedApprover.displayName 快照，Approved By 在每行重复。PDF item table 固定为 Vendor Item Number、Vendor、Description、Unit、Qty、Unit Price、Total Price、Submitted By；Description 是 Product Name snapshot，Qty 是 orderedQuantity，Total Price 优先actualTotalOverride否则以Qty × unitPrice估算并half-up至两位；手填金额0有效，缺单价但有手填金额仍输出Total Price，仅二者都缺才为空。PDF header 固定为 List name、Approved By（selectedApprover.displayName 业务姓名快照）、approved at 和 notes；真实 approvedBy 账号不替代业务姓名，并为长内容分页、换行和重复 item table header。若 snapshot 含当前 PDF 字体无法呈现的字符，PDF 返回非重试型 422 并提示改用 CSV；其他文件生成依赖失败仍返回安全、可重试的 503。响应必须设置正确 Content-Type，并使用 `filename` ASCII fallback 与 RFC 5987 `filename*` UTF-8 编码支持 Unicode List name。
+      description: >-
+        所有 active Member 仅可导出 Approved List，最多 1,000 items；移除商品不导出，空Approved导出CSV仅header、PDF保留页头及空表，商品数/合计为0；Ordered、Completed 和 Cancelled 均不可导出，并返回说明仅 Approved 可导出的 409。
+        CSV 是带 BOM 的 UTF-8、RFC 4180 单一 header + data rows 表格，List name 只通过下载文件名表达，不添加 metadata preamble。
+        CSV header 顺序固定为 Vendor Item Number、Vendor、Description、Unit、Requested Qty、Ordered Qty、Unit Price、Est. Total、Actual Total、Actual Total Reason、Submitted By、Approved By。
+        PDF item table 使用相同前十一列；Approved By 保留在 PDF 页头。此格式取代原 Qty / Total Price 列，不保留旧列别名。
+        Requested Qty 为不可变plannedQuantity；Ordered Qty为orderedQuantity；Description为Product Name snapshot；Unit Price为原单价快照。
+        Est. Total为orderedQuantity × unitPrice；Actual Total优先actualTotalOverride，null时回退估算；两个总价均half-up至两位。
+        未知金额输出空单元格；手填0输出0.00，缺单价但有手填金额仍输出Actual Total，此时Est. Total为空。
+        Actual Total Reason输出actualTotalReason，无人工覆盖时为空；恢复预估后原因也为空。Submitted By取item.submittedByName快照（null为空），Approved By取selectedApprover.displayName快照并在CSV每行重复；真实approvedBy账号不替代业务姓名。
+        为防止spreadsheet formula injection，Vendor Item Number、Vendor、Description、Unit、Actual Total Reason、Submitted By、Approved By中忽略前导空白及Unicode control/format字符后以`=`、`+`、`-`、`@`开头的值添加apostrophe安全前缀；机器消费者以utf-8-sig解码并保留该转换。
+        PDF header固定为List name、Approved By、approved at和notes；所有商品字段及长原因须可读换行、分页和重复item table header，不截断或重叠。
+        所有文本含Actual Total Reason均参与PDF字符支持检查；无法呈现的字符返回非重试型422 PDF_EXPORT_UNSUPPORTED_CHARACTERS并提示改用CSV，其他生成失败返回安全可重试的503。
+        响应设置正确Content-Type及Content-Disposition，使用filename ASCII fallback与RFC 5987 filename* UTF-8编码支持Unicode List name。
       parameters:
       - *id008
       - name: format

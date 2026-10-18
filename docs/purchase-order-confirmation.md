@@ -165,13 +165,44 @@ before; money and inventory movement are separate. There is no new refund field.
   the total boundary. Item `estimatedTotal`/`actualTotal` are rounded display
   amounts; do not sum rounded item displays for monthly aggregation. No currency
   conversion or financial-payment claim is introduced.
-- CSV/PDF export remains Approved-only with existing limits, filenames, headers,
-  formula-injection protection, business-name snapshots and failure responses.
-  In the existing columns, `Qty` becomes Ordered Qty and `Total Price` becomes
-  effective item Actual Total. `Unit Price` remains its snapshot, so a discounted
-  total need not equal Qty × Unit Price. Without price, a manual total is still
-  exported; if both sources are unknown, the total cell stays empty. No new
-  editable whole-order total or extra CSV columns are introduced.
+- CSV/PDF export remains Approved-only with existing item limits, filenames,
+  business-name snapshots and failure responses. The export columns now show
+  both quantities and both amounts explicitly, as approved on 2026-10-18:
+  `Vendor Item Number`, `Vendor`, `Description`, `Unit`, `Requested Qty`,
+  `Ordered Qty`, `Unit Price`, `Est. Total`, `Actual Total`, `Actual Total Reason`,
+  `Submitted By`; CSV additionally ends with `Approved By`. PDF retains its
+  existing Approved By / list name / approved at / notes metadata.
+- `Requested Qty` exports immutable `plannedQuantity`; `Ordered Qty` exports
+  `orderedQuantity`. `Unit Price` remains the snapshot. `Est. Total` exports
+  `estimatedTotal`; `Actual Total` exports effective `actualTotal`, even when it
+  differs from the estimate. Both total columns round half up to two decimals,
+  independently of aggregate calculations. Unknown totals are empty cells;
+  manual zero exports `0.00`, including when price and estimate are unknown.
+  `Actual Total Reason` exports the persisted reason, or an empty cell when no
+  manual override exists. Restoring the estimate clears that current export
+  reason but does not erase audit history. There is no editable whole-order total.
+- This explicitly replaces the earlier `Qty` / `Total Price` column layout; it is
+  a file-format change, not additional aliases alongside ambiguous old columns.
+  CSV keeps UTF-8 BOM, RFC 4180 quoting and one header with no metadata preamble.
+  Existing formula-injection protection also covers `Actual Total Reason` as a
+  free-text field. PDF retains all fields with readable wrapping, page breaks
+  and repeated table headings; long reasons must not truncate or overlap rows.
+  All text, including the reason, participates in existing PDF character checks.
+
+### Export acceptance examples
+
+| Case | Requested Qty | Ordered Qty | Unit Price | Est. Total | Actual Total | Actual Total Reason |
+| --- | --- | --- | --- | --- | --- | --- |
+| Requested 4, order 6, price 10, manual 50 | 4.00 | 6.00 | 10.00 | 60.00 | 50.00 | Buy five, get one free |
+| Same item after restoring estimate | 4.00 | 6.00 | 10.00 | 60.00 | 60.00 | Empty |
+| Price unknown, manual zero | 4.00 | 4.00 | Empty | Empty | 0.00 | Promotional gift |
+| Price and manual total unknown | 4.00 | 4.00 | Empty | Empty | Empty | Empty |
+
+CSV and PDF must both preserve the independent fields and current values. Test
+reason text with commas, line breaks and formula prefixes in CSV, and long/multi-
+page reasons plus unsupported characters in PDF. The UI continues downloading
+server-generated files; it must not reconstruct totals from Requested Qty.
+
 
 ## Legacy consumer protection and rollout
 
