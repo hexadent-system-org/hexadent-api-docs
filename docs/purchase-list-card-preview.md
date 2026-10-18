@@ -8,8 +8,10 @@ The page still paginates Purchase Lists, not their preview items.
 
 Each preview item contains `id`, `productName`, nullable `containedQuantity`
 as a decimal string, nullable `containedUnitName`, `unitName`, and
-`plannedQuantity` as a decimal string. `id` identifies the Purchase List item
-row. `plannedQuantity` is the planned quantity saved on that row. The
+`plannedQuantity` and `orderedQuantity` as decimal strings. `id` identifies the Purchase List item
+row. `plannedQuantity` is the immutable original Requested Qty. `orderedQuantity` is
+the actual ordered quantity and supplies card quantity/receipt context. New live
+responses include it; old cached/replay responses fall back to `plannedQuantity`. The
 contained quantity and contained unit describe the amount within one purchase
 unit: for example, `100.0000` + `pcs` + `box` can display as `100 pcs / box`.
 `specification` is free text and is not used to derive this line.
@@ -26,3 +28,8 @@ the snapshot.
 responses; those endpoints do not acquire a preview field through this change.
 Clients needing full receipt, vendor, or price data use the existing Purchase
 List detail endpoint.
+
+The [order confirmation extension](purchase-order-confirmation.md) defines
+Approved edits and freezes at ordering. Content, product and price snapshots
+remain immutable; Requested Qty is not relabeled as ordered. No amount data is
+added to previews; full quantity/price/manual-amount data comes from detail.

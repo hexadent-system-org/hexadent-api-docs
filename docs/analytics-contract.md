@@ -2,7 +2,7 @@
 
 This document defines the two read-only Analytics APIs. The previous Analytics
 overview and consumption-trend drafts have no runtime consumers and are replaced
-by these contracts. Dashboard Purchase Spend remains unchanged.
+by these contracts. Dashboard Purchase Spend uses the same confirmed-item-value rule described below.
 
 ## Shared rules
 
@@ -64,7 +64,7 @@ reports two reorder risks, one stockout risk, and the full spend. Adding
 those summary and calendar values remain unchanged.
 
 For each item, `A = currentStock + incomingStock`, where incoming is the sum of
-`max(plannedQuantity - receivedQuantity, 0)` across Ordered purchase-list
+`max(orderedQuantity - receivedQuantity, 0)` across Ordered purchase-list
 items. Draft, Approved, Cancelled and already received quantities do not add
 to incoming. Multiple rows for one inventory item are combined. Incoming is
 available for planning from the request date; the API does not invent an ETA
@@ -85,7 +85,7 @@ precede the estimated arrival date and remains visible in the response. The arri
 quantity is `max(0, M + U(arrival, arrival + R calendar days) - S)` in the
 product's inventory/purchase unit. Round it up to a whole unit and return it
 as a decimal string (for example, `2.3` becomes `3.00`). Current stock,
-purchase-list planned and received quantities, and the price snapshot use
+purchase-list ordered and received quantities, and the price snapshot use
 that same unit. `containedQuantity` describes contents within one unit and
 does not multiply or convert the recommendation. No separate pack multiple
 or minimum order quantity is modeled in MVP. Already ordered incoming is
@@ -128,9 +128,13 @@ does not change its status or the forecast.
 `GET /analytics/purchase-spend` returns a continuous 6, 12 or 24 month actual
 series, including the current partial month, followed by exactly the next two
 complete clinic-local calendar months as forecast. Historical actuals use the
-existing Dashboard rule: Ordered/Completed `plannedQuantity * unitPrice`
-snapshots in the local `orderedAt` month. Draft/Approved/Cancelled and missing
-prices are excluded; receipt, correction and completion never move an amount
+Dashboard rule amended by [item confirmation](purchase-order-confirmation.md):
+Ordered/Completed items contribute non-null `actualTotalOverride`, otherwise
+precise `orderedQuantity * unitPrice`, in the local `orderedAt` month.
+Draft/Approved/whole-list Cancelled are excluded. Only items lacking both a manual
+amount and unit price are unpriced; a zero override is known even without price.
+Partial receipts or item cancellation do not subtract a presumed refund.
+Receipt, correction and completion never move an amount
 to another month. The current month contains actual orders only. Its point
 is marked `actual`, never joined to a future forecast as if it had occurred.
 
@@ -159,3 +163,12 @@ Both endpoints return the usual 401/403/422 envelopes and a 503 when a
 required dependency cannot be read. Empty inventory and valid zero demand
 are ordinary 200 results. The organization boundary applies to all source
 rows, including the daily baseline and purchase snapshots.
+
+## Confirmation boundary
+
+The 2026-10-18 extension changes historical order amounts and live incoming
+quantities, not the future recommendation price model. Future replenishment
+still uses existing unit-price snapshots, never manual-total/quantity division.
+Keep tenant/category/date filters and precise-total rounding; partial/unknown
+amount coverage still counts a manual-zero item as priced. Refund/payment/FX
+and order-wide cost allocation are outside this contract.

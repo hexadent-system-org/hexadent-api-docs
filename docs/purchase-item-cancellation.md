@@ -7,10 +7,10 @@
 - 新增 item 响应字段 `isCancelled`、`cancelledAt`、`cancelledBy`、`cancelledQuantity`、`pendingQuantity`、`cancellationReason`，List summary/detail 增加 `canComplete` 和 `cancelledItemCount`。
 - 依赖优先发布期间这些响应属性在 schema 中是可选的；新 API 实现必须始终返回。旧响应/历史幂等 payload 缺失时按未取消处理（false/null/0），pendingQuantity 从当前数量推导；canComplete 从 List 状态和全部 items 推导，摘要没有 items 时等待服务端新字段，不凭分页数据判断。
 - 不扩展 `receiptStatus` 的四个枚举值，`receiptCounts` 继续按实际收货数量计数；取消项不等同于已收齐。UI 优先显示 Cancelled，同时保留 Received 6/10。
-- 未取消项：`cancelledQuantity=0`，`pendingQuantity=max(plannedQuantity-receivedQuantity,0)`。
-- 已取消项：`cancelledQuantity=plannedQuantity-receivedQuantity`，`pendingQuantity=0`。原订购和实收数量冻结，不允许新的 Receive 或 Correction（包括 no-op）。不提供恢复。
+- 未取消项：`cancelledQuantity=0`，`pendingQuantity=max(orderedQuantity-receivedQuantity,0)`。
+- 已取消项：`cancelledQuantity=orderedQuantity-receivedQuantity`，`pendingQuantity=0`。原订购和实收数量冻结，不允许新的 Receive 或 Correction（包括 no-op）。不提供恢复。
 - List 为 Ordered 且所有 item 已收齐/超收或取消时，`canComplete=true`，其他状态 false。取消不会自动完成 List。
-- Draft incomingSummary 的 planned/received/listCount 保留当前活跃单据历史口径；remainingQuantity 汇总 pendingQuantity。不可为排除取消部分而删除该行的已收货历史。Dashboard 原 receipt counts 保留实际收货口径；金额分析不在本次变更中改写。
+- Draft incomingSummary 的 planned/received/listCount/remaining 仅汇总未取消的活跃项；planned使用订货量，remaining汇总pendingQuantity。取消行的已收货历史在原item/收货记录保留，不重新计入活跃在途摘要。Dashboard 原 receipt counts 保留实际收货口径；金额分析按后续确认金额契约处理，单项取消不推断退款。
 
 ## 收货进度排除已取消项
 
@@ -89,7 +89,7 @@
 
 Complete 请求使用 `expectedListVersion` 和可选 `expectedItemVersions`（完整 item UUID/version map）；不再使用旧文档中的 confirmVariance。它在当前 API 也已不存在，不能作为短收绕过入口。
 
-若有未取消且 received < planned 的项，返回 409 PURCHASE_LIST_ITEMS_PENDING，details 为 pendingItemCount 与 purchaseListItemIds。新客户端禁用 Complete 并提示处理待收货项；旧客户端仍能正常读取原枚举，并按通用错误处理显示后端英文 message。新 Cancel UI 必须等新 API 部署确认后才启用。
+若有未取消且 received < orderedQuantity 的项，返回 409 PURCHASE_LIST_ITEMS_PENDING，details 为 pendingItemCount 与 purchaseListItemIds。新客户端禁用 Complete 并提示处理待收货项；旧客户端仍能正常读取原枚举，并按通用错误处理显示后端英文 message。新 Cancel UI 必须等新 API 部署确认后才启用。
 
 Complete 只改 List 状态并写原有 audit，不更改库存。成功结果包含完整详情、alreadyCompleted 和 nullable message；已 Completed 的重复调用维持原有 alreadyCompleted=true 行为。历史 Completed 短收单不自动重开。新增错误不要求旧客户端解析 details，也不能导致崩溃。
 
@@ -102,3 +102,9 @@ Complete 只改 List 状态并写原有 audit，不更改库存。成功结果�
 新增原因必测：缺失/null/纯空白/trim 后 500 与 501 字符、保存规范化值及读回、历史 null/缺字段、相同 key 改原因冲突及旧成功无原因请求重放、取消/回 Draft 失败不保存原因、迁移保护已有原因。
 
 必测边界：10 收 6 取消 4、零收货取消、全收齐/超收不能取消、默认不回 Draft、已有 Draft 合并保留 vendor、合并超限全回滚、取消后 Receive/Correction/no-op 拒绝、取消/收货/Complete 竞争、成功重放、不同 payload 复用 key、跨组织 ID、旧 Completed 与历史幂等 payload。文档任务无 DB 或部署操作，不将下游测试当作本任务已完成证据。
+
+## 2026-10-18 订货确认扩展
+
+[订货确认契约](purchase-order-confirmation.md)新增独立orderedQuantity，旧plannedQuantity保留原需求。实时收货状态、Complete、pending/cancelled quantity及所有回Draft数量以orderedQuantity为准；旧快照缺新字段时回退plannedQuantity。原整单取消与单项取消各自的metadata/姓名冲突规则不变。新confirmation能力header保护所有改变订货量或人工金额后的相关取消/收货操作，成功旧幂等重放仍返回原快照。
+
+Requested4、Ordered5、Received2，取消并回Draft仅增加3；没有自动退款，Actual Total不减少。历史Received与库存不被修改，取消后Receive/Correction仍拒绝。
