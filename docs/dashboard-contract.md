@@ -105,14 +105,15 @@ unchanged; this is the target for the not-yet-implemented API and Web module.
 
 Return one total amount per month, not consumption quantities or per-category
 series. Include the current incomplete month and exactly 6, 12, or 24 continuous
-months in ascending order. Use Purchase List item `plannedQuantity` times its
-`unitPrice` snapshot, assigned to the list's `orderedAt` month in the clinic
+months in ascending order. Use the item's non-null `actualTotalOverride`, otherwise its precise Decimal
+`orderedQuantity * unitPrice` snapshot product, assigned to the list's `orderedAt` month in the clinic
 timezone. Include lists currently Ordered or Completed with `orderedAt` between
 local midnight on `fromDate` and `asOf`, inclusive. Draft, Approved, and Cancelled
 lists do not contribute. Join all records within the authenticated organization.
 
-The current lifecycle prohibits cancellation and changes to ordered quantities
-or price snapshots after ordering. Receiving (including partial or cross-month
+The lifecycle freezes Ordered Qty, manual total/reason and price snapshots after
+ordering. Individual item cancellation is allowed by its separate contract but
+does not infer a refund or reduce confirmed order value. Receiving (including partial or cross-month
 receiving), receipt corrections, and completion (including forced completion)
 neither change the original ordered amount nor add another amount. Retain ordered
 snapshots after inventory removal; do not join/filter on current inventory
@@ -120,8 +121,9 @@ availability or use current Inventory prices. This measures order placement,
 not eventual fulfilled value, consumption, invoices, refunds, or payments.
 
 Compute precise Decimal products, sum by month, then round half-up to two decimal
-places. Missing price is excluded; an explicit zero price is valid. An empty month,
-including a month with only missing-price ordered items, is `0.00`. This is not
+places. An item is unpriced only when both override and unit price are null; a zero
+override is valid even without a unit price. An empty month,
+including a month with only unknown-amount ordered items, is `0.00`. This is not
 proof that all orders were free or that no orders were placed.
 
 Follow the existing single-currency price convention: return the current
@@ -130,7 +132,7 @@ snapshot; changing regional currency does not convert historical numeric values.
 This contract does not introduce FX or historical currency accounting. The Web
 always displays this qualification:
 
-> Estimated from ordered quantities and purchase prices. Items without a price are excluded. This does not represent payments.
+> Based on confirmed item totals where provided, otherwise ordered quantities and purchase prices. Items without an amount are excluded. This does not represent payments.
 
 ### Amendment and implementation dependencies
 
@@ -142,9 +144,13 @@ order. This supersedes the 2026-09-23 received-value and original-receipt-month
 correction policy. Receipt attribution and historical correction migration are
 no longer prerequisites for this metric; the receipt workflow itself is unchanged.
 
-Implementation uses existing Purchase List `orderedAt` and item quantity/price
-snapshots. Verify the existing schema and tenant-scoped query behavior; do not
-introduce receipt links, migrations, or provisioning under this contract change.
+The original module used existing `orderedAt` and quantity/price snapshots. The
+2026-10-18 [item confirmation extension](purchase-order-confirmation.md) now adds
+Ordered Qty and nullable manual total/reason through its own API migration; no
+receipt links, refund fields or new infrastructure are introduced. Keep monthly
+Decimal aggregation rounding, organization scope and existing state/date filters.
+Item display totals are rounded; aggregate the precise fallback product or manual
+amount before rounding, not the already-rounded display fields.
 Docs, API, and the existing Web integration task are independently delivered,
 in that compatibility order. The API remains read-only; the Web changes only its
 source data and the approved subtitle/qualification in its own task.
@@ -177,3 +183,11 @@ user-verified CI. Page QA and API/Web deployment verification do not apply to th
 Docs-only change. Runtime isolation, timestamp boundaries, query performance,
 ordered snapshot aggregation, and browser acceptance remain gates of their implementation
 tasks, not evidence supplied by this document.
+
+## Item confirmation extension
+
+Current quantity progress compares received against `orderedQuantity`, falling
+back to `plannedQuantity` only for old stored responses. The original forced-
+completion discussion above is historical; the current cancellation contract
+requires all items received or cancelled. See [confirmation](purchase-order-confirmation.md)
+and [cancellation](purchase-item-cancellation.md) for current semantics.

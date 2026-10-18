@@ -60,6 +60,7 @@ API 负责提供面向用户的英文错误提示。客户端不得解析 `messa
 | --- | ---: | --- | --- |
 | `FORBIDDEN` | 403 | API 根据操作返回对应的权限提示。 | 保持当前页面，显示 `message`，不得自动重试。 |
 | `RESOURCE_NOT_FOUND` | 404 | We couldn't find that resource. | 保持当前页面并刷新当前 Organization 的列表；跨租户 ID 使用同一 code/message，不提示资源存在。 |
+| `PURCHASE_CONFIRMATION_CLIENT_REQUIRED` | 409 | This purchase list uses updated order quantities or amounts. Use a supported client to continue. | 使用支持订货确认的新客户端；不自动伪造capability header或重复旧收货。details.requiredConfirmationVersion=1；详见purchase-order-confirmation.md。 |
 | `PURCHASE_LIST_STATE_CONFLICT` | 409 | This purchase list can no longer be changed in its current state. | 刷新 List detail 并按最新状态禁用不合法操作；不得自动回退状态。 |
 | `PURCHASE_LIST_RECEIPTS_PREVENT_CANCELLATION` | 409 | This purchase list has receiving history and can't be cancelled. | 保留 List detail 并隐藏/禁用 Cancel；不得尝试删除 receipt history。 |
 | `PURCHASE_CORRECTION_NEGATIVE_INVENTORY` | 409 | This correction would make inventory negative. | 保留输入，展示最新 Inventory quantity 和允许的最小 total；用户修改后使用新 key 重试。 |
@@ -169,3 +170,14 @@ function handleApiError(error: ApiError) {
 | 网络/5xx | Couldn't load the notification. Please try again. / 通知加载失败，请重试 | 保留目标供重试，不当作不存在 |
 
 本流程客户端按稳定 status/error.code 映射上述文案；不解析 message。未登录按既有登录恢复流程处理。Resolved 不造成定位失败；inventoryItemAvailable=false 仅禁用商品导航，尝试时提示 This inventory item has been deleted. / 该库存项已删除。空列表文案 No new notifications / 暂无新通知。
+
+## Approved item confirmation
+
+`PATCH /purchase-list-items/{itemId}/confirmation` uses the existing access,
+validation, idempotency and list/item-version errors. Expected-version conflicts
+retain the unsaved user draft, refresh server data and require an explicit retry;
+never automatically overwrite a competing edit. State conflicts make the item
+read-only. `REQUEST_VALIDATION_ERROR` identifies orderedQuantity, manual amount
+or reason; failed saves must not silently enable Mark as Ordered with old values.
+See [confirmation](purchase-order-confirmation.md) for conditional legacy-client
+409 protection and historical successful idempotency replay ordering.

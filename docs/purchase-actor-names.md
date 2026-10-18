@@ -79,7 +79,7 @@ Approve 保持现有成员请求有效：
 | 存在 | 双方 null | 合并数量，姓名仍 null |
 | 存在 | 不同，或仅一方 null | 409 PURCHASE_DRAFT_SUBMITTER_CONFLICT，整次操作无写入 |
 
-单项取消新建 Draft 仍只恢复未收货数量，vendor/vendorItemNumber/unitPrice/notes/priority 为 null，另复制提交人。整单取消仍恢复全部 plannedQuantity 及既有 metadata 快照，priority 为 null，另复制提交人；保持原有历史数量兼容。合并仍遵循原数量上限，不覆盖 vendor 等 metadata。
+单项取消新建 Draft 仍只恢复未收货数量，vendor/vendorItemNumber/unitPrice/notes/priority 为 null，另复制提交人。整单取消按[订货确认契约](purchase-order-confirmation.md)恢复全部 orderedQuantity（旧响应缺省时回退 plannedQuantity）及既有 metadata 快照，priority 为 null，另复制提交人；保持原有历史数量兼容。合并仍遵循原数量上限，不覆盖 vendor 等 metadata。
 
 同组织检查、锁、版本、数量上限和幂等必须与原事务一致。整单任一项冲突时，整个取消和全部 Draft 写入回滚；不能先取消再报错、跳过冲突行或只恢复部分。即使创建 Draft 时发生并发竞争，也不能绕过姓名检查。成功重放不重新合并；失败没有成功结果可重放，用户修改请求（如 returnToDraft）应使用新 key。
 
@@ -111,7 +111,7 @@ Approve 保持现有成员请求有效：
 
 业务审批人统一显示 selectedApprover.displayName，包括创建确认/成功提示、清单列表/详情及 Dashboard；实际账号仍作为 approvedBy 保留。商品详情使用提交人快照，null 留空。
 
-仅 Approved 可导出及既有数量/价格规则保持。CSV 保持 BOM、单 header、无 metadata preamble；原七列顺序不变，末尾增加 Submitted By、Approved By，分别为 item 提交人快照与每行重复的业务审批人姓名。PDF 商品表末尾增加 Submitted By，页头 Approved By 使用业务审批人快照。两个新自由文本值均纳入既有 CSV formula-injection 防护及 PDF 字符支持检查；中文姓名可保存，但当前 PDF 字体不支持时仍返回 PDF_EXPORT_UNSUPPORTED_CHARACTERS 422 并可改用 CSV，不在本次引入字体或 PDF 引擎。
+仅 Approved 可导出；姓名和文件安全规则保持，Qty/Total Price按后续[订货确认契约](purchase-order-confirmation.md)使用订货量和有效单项金额。CSV 保持 BOM、单 header、无 metadata preamble；原七列顺序不变，末尾增加 Submitted By、Approved By，分别为 item 提交人快照与每行重复的业务审批人姓名。PDF 商品表末尾增加 Submitted By，页头 Approved By 使用业务审批人快照。两个新自由文本值均纳入既有 CSV formula-injection 防护及 PDF 字符支持检查；中文姓名可保存，但当前 PDF 字体不支持时仍返回 PDF_EXPORT_UNSUPPORTED_CHARACTERS 422 并可改用 CSV，不在本次引入字体或 PDF 引擎。
 
 ## 发布、迁移与验证边界
 
