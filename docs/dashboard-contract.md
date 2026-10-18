@@ -191,3 +191,13 @@ back to `plannedQuantity` only for old stored responses. The original forced-
 completion discussion above is historical; the current cancellation contract
 requires all items received or cancelled. See [confirmation](purchase-order-confirmation.md)
 and [cancellation](purchase-item-cancellation.md) for current semantics.
+
+## Empty Approved lists
+
+The [Approved item cancellation extension](purchase-item-cancellation.md) permits
+empty Approved lists: they remain in Approved counts and overview lists, with
+`itemCount=0`, all receipt counts zero, `cancelledItemCount=0`, no receiving progress
+and zero current list amount. Removing a row updates current counts, totals and
+active incoming; deleting the empty list removes it from counts and groups. Keep
+existing Dashboard sorting/date filters. Ordered cancelled-item historical spend
+still retains confirmed order amounts and does not infer refunds.

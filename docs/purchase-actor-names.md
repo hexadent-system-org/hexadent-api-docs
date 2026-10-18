@@ -70,16 +70,17 @@ Approve 保持现有成员请求有效：
 
 ## 退回 Draft 的冲突
 
-规则覆盖 Ordered item 的可选退回，以及 Approved 整单取消时的必然退回。退回姓名取原 item.submittedByName 快照；只使用现有已加载 item 和加锁 Draft 记录，无额外姓名/成员查询。
+规则覆盖 Approved/Ordered item 的可选退回，以及 Approved 整单取消时的必然退回。单项支持用户明确确认覆盖，整单仍严格阻止冲突；见[取消契约](purchase-item-cancellation.md)。退回姓名取原 item.submittedByName 快照；只使用现有已加载 item 和加锁 Draft 记录，无额外姓名/成员查询。
 
 | 同商品 Draft | 提交人比较 | 结果 |
 | --- | --- | --- |
 | 不存在 | 任意，包括 null | 新建并复制姓名 |
 | 存在 | 规范化后相同 | 合并数量，保留 Draft 的姓名展示值和其他 metadata |
 | 存在 | 双方 null | 合并数量，姓名仍 null |
-| 存在 | 不同，或仅一方 null | 409 PURCHASE_DRAFT_SUBMITTER_CONFLICT，整次操作无写入 |
+| 存在 | 不同，或仅一方 null；无有效确认 | 409 PURCHASE_DRAFT_SUBMITTER_CONFLICT，整次操作无写入 |
+| 存在 | 单项Cancel提供有效draftReturnConfirmation | ID/version校验后合并数量，用返回item姓名覆盖合并整行（含null）；其他metadata不改 |
 
-单项取消新建 Draft 仍只恢复未收货数量，vendor/vendorItemNumber/unitPrice/notes/priority 为 null，另复制提交人。整单取消按[订货确认契约](purchase-order-confirmation.md)恢复全部 orderedQuantity（旧响应缺省时回退 plannedQuantity）及既有 metadata 快照，priority 为 null，另复制提交人；保持原有历史数量兼容。合并仍遵循原数量上限，不覆盖 vendor 等 metadata。
+单项取消新建 Draft：Approved恢复全部已保存orderedQuantity，Ordered仅恢复未收货订货量，vendor/vendorItemNumber/unitPrice/notes/priority 为 null，另复制提交人。整单取消按[订货确认契约](purchase-order-confirmation.md)恢复全部 orderedQuantity（旧响应缺省时回退 plannedQuantity）及既有 metadata 快照，priority 为 null，另复制提交人；保持原有历史数量兼容。合并仍遵循原数量上限，不覆盖 vendor 等 metadata。
 
 同组织检查、锁、版本、数量上限和幂等必须与原事务一致。整单任一项冲突时，整个取消和全部 Draft 写入回滚；不能先取消再报错、跳过冲突行或只恢复部分。即使创建 Draft 时发生并发竞争，也不能绕过姓名检查。成功重放不重新合并；失败没有成功结果可重放，用户修改请求（如 returnToDraft）应使用新 key。
 
@@ -103,9 +104,13 @@ Approve 保持现有成员请求有效：
 }
 ```
 
-上述 details 字段对新错误均必需，两个姓名可为 null；整单冲突返回首个冲突项即可，客户端不依赖冲突项顺序。只包含当前组织记录，不暴露其他 tenant、SQL 或内部 fingerprint。API 英文 message 中缺姓名可写 Not specified；这不改变普通 Draft 空值留空的规则。客户端按 code 处理，不能解析 message 决定流程；显示姓名时当作纯文本。
+上述六个ID/姓名details字段对新错误均必需，两个姓名可为 null；整单冲突返回首个冲突项即可，客户端不依赖冲突项顺序。只包含当前组织记录，不暴露其他 tenant、SQL 或内部 fingerprint。API 英文 message 中缺姓名可写 Not specified；这不改变普通 Draft 空值留空的规则。客户端按 code 处理，不能解析 message 决定流程；显示姓名时当作纯文本。
 
-冲突后提示去 Draft 检查并先与相关人员沟通，不自动覆盖提交人或调整数量。Ordered item 可由用户重新确认 returnToDraft=false，表示仅取消未收货部分，Draft、已收货和库存不变；系统不能自动改选。Approved 整单取消没有“不退回”选项，本次不新增该能力。
+单项冲突提示双方姓名、合并前/退回/合并后数量，以及覆盖影响整个Draft行。用户退出无写入；明确继续携带draftReturnConfirmation（draftItemId/expectedVersion）并使用新key；与外层List/item版本一起校验，任一改变重新确认，不静默覆盖。returnToDraft=false不可携带确认（422）；同名/双空且无确认保留原展示值。有效确认允许返回null覆盖现有姓名，数量相加且Draft version加1。详见取消契约。
+
+Approved/Ordered item 也可主动选择returnToDraft=false后用新key仅取消，Draft、已收货和库存不变；系统不能自动改选。整单冲突仍提示去Draft核对/调整，整个操作回滚，不接受单项确认字段，也没有不退回选项。
+
+单项Cancel的同一错误额外必返draftVersion、currentPlannedQuantity、returningQuantity、mergedPlannedQuantity；数量为精确decimal string（合并预览可以超上限，但确认仍按上限拒绝）。来自同一加锁快照，返回ID/version绑定；整单错误维持原details，不增加确认。例Draft=2/返回3/合并5、draftVersion=4。确认目标版本冲突采用PURCHASE_DRAFT_VERSION_CONFLICT及draftItemId/currentVersion（行已删除时null），不泄露其他组织记录。两个分支都先授权，未知/跨组织确认ID视为目标不匹配，不能泄露其存在性。
 
 ## 展示与导出
 

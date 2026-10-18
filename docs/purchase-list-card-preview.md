@@ -33,3 +33,14 @@ The [order confirmation extension](purchase-order-confirmation.md) defines
 Approved edits and freezes at ordering. Content, product and price snapshots
 remain immutable; Requested Qty is not relabeled as ordered. No amount data is
 added to previews; full quantity/price/manual-amount data comes from detail.
+
+## Approved item removal and empty cards
+
+[Approved item Cancel](purchase-item-cancellation.md) removes the row from current
+`items` and `previewItems`, and decrements `itemCount`; it does not add a Cancelled
+preview. Requested/product/price snapshots on remaining rows stay immutable.
+After the last removal, keep the Approved card with `itemCount=0`, `previewItems=[]`,
+zero current amount and no receipt percentage/bar. It still counts as an Approved
+list until the user deletes it. All consumers must handle empty arrays before
+Approved removal is enabled; do not dereference the first preview unconditionally.
+Ordered/Completed cards retain cancelled rows and the existing receipt rules.
