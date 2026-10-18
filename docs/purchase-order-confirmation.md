@@ -79,7 +79,7 @@ Example explicit Save:
 
 Return `200 PurchaseListDetail` with current list and item versions. Lock the
 parent list before its item, compare both versions, and require Approved state;
-order/cancel and competing saves serialize on that parent. A material change
+order/cancel, empty-list deletion and competing saves serialize on that parent. A material change
 increments list and item versions and updates list `updatedAt`; immutable product,
 price, submitted-by and approver snapshots do not change. No inventory, activity
 or receipt is created. A current-version no-op completes idempotency but does not
@@ -105,8 +105,9 @@ quantity, amount, paired fields or an empty edit. No partial writes on failure.
 ## Ordering, receiving and cancellation
 
 Mark as Ordered uses the latest successfully saved list version; it does not
-implicitly save local edits. Web must disable/resolve Mark as Ordered while a
-quantity/amount edit is dirty, saving or failed. Ordering freezes Ordered Qty,
+implicitly save local edits. Web must disable/resolve Mark as Ordered and Approved item Cancel while a
+quantity/amount edit is dirty, saving or failed; explicitly save or discard local
+input before Cancel, which always uses saved server quantities. Ordering freezes Ordered Qty,
 override and reason. After ordering neither quantity nor amount can be edited,
 even before first receipt. Completed and Cancelled are also read-only.
 
@@ -129,11 +130,15 @@ stock only, never Ordered Qty or item amount. Cancel with return-to-Draft restor
 3 in the first example. Approved whole-list cancellation also restores Ordered
 Qty, following its existing metadata and submitted-by conflict rules. Ordered
 item cancellation retains its existing optional return choice, metadata rules,
-reason, no-receive/no-correction rule, idempotency and atomic Draft merge. Overflow
-or a merge conflict rolls the whole cancellation back.
+reason, no-receive/no-correction rule, idempotency and atomic Draft merge. Approved item Cancel restores all saved Ordered Qty (Requested 4 / Ordered 5
+returns 5), removes the row and requires the cancellation capability header.
+Single-item submitter conflicts may be explicitly confirmed against the current
+Draft ID/version; whole-list conflicts remain blocking. Overflow or an
+unconfirmed/stale merge conflict rolls the whole cancellation back.
 
-Neither partial receiving nor cancellation reduces the confirmed item amount or
-infers a refund. Quantity progress and active incoming exclude cancelled items as
+Neither partial receiving nor Ordered item cancellation reduces the confirmed
+item amount or infers a refund. Approved item Cancel removes that row and its
+amount from the current list, as defined in the [cancellation contract](purchase-item-cancellation.md). Quantity progress and active incoming exclude cancelled items as
 before; money and inventory movement are separate. There is no new refund field.
 
 ## Read surfaces, money and export
@@ -259,3 +264,12 @@ Delivery order:
 | Headerless old receipt against changed Ordered Qty | 409 upgrade requirement, inventory unchanged. |
 | Historical Requested/Ordered 1000000.00 | Read/backfill remains 1000000.00 without clamping; a new explicit edit to 1000000.00 is 422. |
 | Two saves / Save racing Mark as Ordered | One serializable winner; stale or non-Approved request conflicts, never partial state. |
+
+## Approved item Cancel compatibility
+
+The [cancellation extension](purchase-item-cancellation.md) independently requires
+`X-Purchase-Cancellation-Version: 1` for Approved item Cancel, single-item Draft
+submitter overwrite confirmation and empty Approved deletion. It does not replace
+`X-Purchase-Confirmation-Version: 1` where this contract requires it. Old successful
+replays remain first. An empty Approved list cannot be ordered or whole-list
+cancelled (`PURCHASE_LIST_EMPTY`); it stays visible until manually deleted.
