@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: HexaDent AI Inventory Platform API
-  version: 0.7.1
+  version: 0.7.2
   description: Web、iOS 与 Android MVP 的统一业务 API Contract。Purchase List 章节是 contract-first replacement，runtime 尚未实现。生产域名待定。
 servers:
 - url: /v1
@@ -1513,7 +1513,7 @@ paths:
         Requested Qty 为不可变plannedQuantity；Ordered Qty为orderedQuantity；Description为Product Name snapshot；Unit Price为原单价快照。
         Est. Total为orderedQuantity × unitPrice；Actual Total优先actualTotalOverride，null时回退估算；两个总价均half-up至两位。
         未知金额输出空单元格；手填0输出0.00，缺单价但有手填金额仍输出Actual Total，此时Est. Total为空。
-        Actual Total Reason输出actualTotalReason，无人工覆盖时为空；恢复预估后原因也为空。Submitted By取item.submittedByName快照（null为空），Approved By取selectedApprover.displayName快照并在CSV每行重复；真实approvedBy账号不替代业务姓名。
+        Actual Total Reason输出actualTotalReason，未填写原因时为空（人工覆盖存在时也可为空）；恢复预估后原因也为空。Submitted By取item.submittedByName快照（null为空），Approved By取selectedApprover.displayName快照并在CSV每行重复；真实approvedBy账号不替代业务姓名。
         为防止spreadsheet formula injection，Vendor Item Number、Vendor、Description、Unit、Actual Total Reason、Submitted By、Approved By中忽略前导空白及Unicode control/format字符后以`=`、`+`、`-`、`@`开头的值添加apostrophe安全前缀；机器消费者以utf-8-sig解码并保留该转换。
         PDF header固定为List name、Approved By、approved at和notes；所有商品字段及长原因须可读换行、分页和重复item table header，不截断或重叠。
         所有文本含Actual Total Reason均参与PDF字符支持检查；无法呈现的字符返回非重试型422 PDF_EXPORT_UNSUPPORTED_CHARACTERS并提示改用CSV，其他生成失败返回安全可重试的503。
@@ -1648,7 +1648,7 @@ paths:
       summary: 保存 Approved item 的订货量及单项确认金额
       description: >-
         所有 active Member 可执行，仅 Approved 可编辑。明确 Save 原子更新 orderedQuantity、actualTotalOverride 与 actualTotalReason，不覆盖 plannedQuantity 原需求或 unitPrice。
-        省略字段保留；新手填金额必须同时提供非空原因；override=null恢复估算并清空当前原因。
+        数量单独修改保留金额和原因；新手填金额的原因可选，省略/null/纯空白保存为null，不沿用旧原因；override=null恢复估算并清空当前原因。
         同时锁定并校验 List/Item versions；材料变化增加两者version与List updatedAt，当前版本no-op不增加version。幂等重试回放原结果，过期版本即使数值相同仍409。
         本路由要求 X-Purchase-Confirmation-Version 为1（缺失或不支持为409业务错误）。不写Inventory/Activity/receipt；字段、审计与旧客户端保护见purchase-order-confirmation.md。
       parameters: [*id009, *id006, {$ref: '#/components/parameters/PurchaseConfirmationVersion'}]
@@ -1660,6 +1660,10 @@ paths:
             examples:
               manualTotal:
                 value: {expectedListVersion: 2, expectedItemVersion: 1, orderedQuantity: '6.00', actualTotalOverride: '50.00', actualTotalReason: Buy five get one free}
+              manualTotalWithoutReason:
+                value: {expectedListVersion: 2, expectedItemVersion: 1, actualTotalOverride: '0.00'}
+              clearReason:
+                value: {expectedListVersion: 3, expectedItemVersion: 2, actualTotalReason: null}
               restoreEstimate:
                 value: {expectedListVersion: 3, expectedItemVersion: 2, actualTotalOverride: null}
       responses:
@@ -4275,9 +4279,8 @@ components:
           anyOf: [{$ref: '#/components/schemas/PurchaseManualTotalInput'}, {type: 'null'}]
         actualTotalReason:
           type: [string, 'null']
-          pattern: '\S'
-          description: trim后长度1–500；每次显式保存非null手填金额均需同次提供原因。省略或null的状态相关规则见purchase-order-confirmation.md。
-      description: Save的一次原子请求；省略保留，显式null覆盖恢复估算且清空原因。reason-only仅当已有人工覆盖时有效。状态相关校验由服务端返回422，不用额外持久化编辑标记。
+          description: 可选原因；trim后非空时限制1–500个Unicode字符，空白或null归一化为null。显式保存非null手填金额但省略原因也保存null，不沿用旧原因。reason-only清空要求已有人工覆盖；详见purchase-order-confirmation.md。
+      description: Save的一次原子请求；未提供override时保留金额，只改数量保留原因；提供override时同时替换可选原因。显式null覆盖恢复估算且清空原因；reason-only（含清空）仅当已有人工覆盖时有效。非空原因不能脱离人工覆盖存在。状态相关校验由服务端返回422，不用额外持久化编辑标记。
     PurchaseListItem:
       type: object
       required: [id, inventoryItemId, productName, brandName, specification, unitName, containedQuantity, containedUnitName, plannedQuantity, receivedQuantity, remainingQuantity, varianceQuantity, receiptStatus, vendor, vendorItemNumber, unitPrice, notes, submittedByName, version]
@@ -4314,7 +4317,7 @@ components:
           type: [string, 'null']
           minLength: 1
           maxLength: 500
-          description: 手填覆盖的trim后原因，与覆盖同时为值或同时null；恢复估算清空当前原因但保留审计。
+          description: 手填覆盖的可选trim后原因；人工覆盖存在时也可为null，无人工覆盖时必须为null。恢复估算或显式清空原因保留审计。
         actualTotal:
           anyOf: [{$ref: '#/components/schemas/PurchaseDisplayTotal'}, {type: 'null'}]
           description: 人工覆盖非null时优先，否则estimatedTotal；均缺为null，非付款金额。新实时响应始终包含全部新增金额字段，旧快照可缺省。

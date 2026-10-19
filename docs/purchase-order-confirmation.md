@@ -1,6 +1,7 @@
 # Purchase item order confirmation
 
-This is the contract-first extension approved on 2026-10-18. It does not claim
+This is the contract-first extension approved on 2026-10-18, with optional
+Actual Total Reason approved on 2026-10-19. It does not claim
 runtime availability. Deliver Docs, then the API expansion and migration, then
 Web consumption. It adds no infrastructure, payment, invoice, refund or promotion
 engine. Every amount is in the existing organization currency; there is no FX.
@@ -14,7 +15,7 @@ engine. Every amount is in the existing organization currency; there is no FX.
 | `unitPrice` | Existing immutable purchase-unit price snapshot; this extension does not introduce price editing. |
 | `estimatedTotal` | Nullable display amount: `orderedQuantity * unitPrice`, rounded half up to two decimals. Null when unit price is unknown. |
 | `actualTotalOverride` | Nullable persisted manual item total, nonnegative and at most 999999999999.99, at most two decimals. Null means use the estimate; zero is a real override. |
-| `actualTotalReason` | Nullable persisted explanation, trimmed Unicode length 1–500 when an override exists. |
+| `actualTotalReason` | Optional persisted explanation; null is allowed with a manual override. Nonblank values have trimmed Unicode length 1–500; without an override the reason must be null. |
 | `actualTotal` | Nullable effective display amount: override when non-null, otherwise estimate. This is confirmed item order value, not money paid. |
 
 New live item responses always include the five new fields. Historical cached or
@@ -38,10 +39,14 @@ reconfirmation prompt or warning. Its reason is not a cancellation reason.
 Missing price and no override means unknown, not zero; missing amount does not
 prevent ordering. An override can provide a known amount without a unit price.
 
-The explicit **Save** action submits only fields the user actually changed. Merely
-showing an estimated default, focusing/blurring it or saving a quantity must not
-create a manual override. Restore estimate explicitly clears both override and
-current reason; historical audit entries remain. No blur autosave is introduced.
+The explicit **Save** action submits only fields the user actually changed, with
+the paired amount/reason rules below. Focusing/blurring a field or saving a quantity
+must not create a manual override. Web shows **Not Set** until an override is saved;
+**Use Est. Total** copies the current estimate into the edit, requiring explicit
+Save. This display choice does not change effective API `actualTotal`, reports or
+exports. Web has no restore button; the API still supports explicitly clearing an
+override to resume the estimate and clear its current reason. Historical audit
+entries remain. No blur autosave is introduced.
 
 ## Approved item mutation
 
@@ -53,17 +58,20 @@ only initial approval remains restricted to Admin/Manager. No reapproval is adde
 
 Required body: `expectedListVersion`, `expectedItemVersion`. At least one of
 `orderedQuantity`, `actualTotalOverride`, `actualTotalReason` is required. Unknown
-properties are rejected. Quantity cannot be null or zero. Omission leaves a field
-unchanged. Manual amount and reason have the following coupled rules:
+properties are rejected. Quantity cannot be null or zero. The reason is optional:
+trim before validating; empty or whitespace-only strings normalize to null, and
+nonblank reasons must contain at most 500 Unicode characters. Manual amount and
+reason have the following coupled rules (the amount/reason pair is replaced when
+an override is supplied):
 
 | Supplied fields | Result |
 | --- | --- |
 | Quantity only | Preserve override and reason, including nulls. |
 | Non-null override plus nonblank reason | Replace both, even if effective amount equals the estimate. |
-| Non-null override without a reason in this request | 422; an old reason cannot silently justify a new manual amount. |
-| Null override, with reason omitted or null | Clear override and current reason; resume estimate. |
-| Null override plus non-null reason | 422. |
-| Reason only | Allowed only with an existing non-null override; must remain nonblank. Otherwise 422. |
+| Non-null override with reason omitted, null or blank | Save the amount and null reason, replacing any old reason. |
+| Null override, with reason omitted, null or blank | Clear override and current reason; resume estimate. |
+| Null override plus nonblank reason | 422. |
+| Reason only, including null or blank | Allowed only with an existing non-null override; update or clear the reason without changing the amount. Otherwise 422. |
 
 Example explicit Save:
 
@@ -179,8 +187,9 @@ before; money and inventory movement are separate. There is no new refund field.
   independently of aggregate calculations. Unknown totals are empty cells;
   manual zero exports `0.00`, including when price and estimate are unknown.
   `Actual Total Reason` exports the persisted reason, or an empty cell when no
-  manual override exists. Restoring the estimate clears that current export
-  reason but does not erase audit history. There is no editable whole-order total.
+  reason is set, including when a manual override exists. Restoring the estimate
+  clears that current export reason but does not erase audit history. There is no
+  editable whole-order total.
 - This explicitly replaces the earlier `Qty` / `Total Price` column layout; it is
   a file-format change, not additional aliases alongside ambiguous old columns.
   CSV keeps UTF-8 BOM, RFC 4180 quoting and one header with no metadata preamble.
@@ -194,6 +203,7 @@ before; money and inventory movement are separate. There is no new refund field.
 | Case | Requested Qty | Ordered Qty | Unit Price | Est. Total | Actual Total | Actual Total Reason |
 | --- | --- | --- | --- | --- | --- | --- |
 | Requested 4, order 6, price 10, manual 50 | 4.00 | 6.00 | 10.00 | 60.00 | 50.00 | Buy five, get one free |
+| Same manual amount without a reason | 4.00 | 6.00 | 10.00 | 60.00 | 50.00 | Empty |
 | Same item after restoring estimate | 4.00 | 6.00 | 10.00 | 60.00 | 60.00 | Empty |
 | Price unknown, manual zero | 4.00 | 4.00 | Empty | Empty | 0.00 | Promotional gift |
 | Price and manual total unknown | 4.00 | 4.00 | Empty | Empty | Empty | Empty |
@@ -256,14 +266,50 @@ Delivery order:
 | Requested 5, Ordered 6, price 10, manual 50 + reason | Estimate 60, effective amount 50; buy-five-get-one needs no unit-price change. |
 | Change Ordered 6 to 7 after that Save | Estimate 70, manual/effective amount stays 50; no confirmation prompt. |
 | Save quantity only with untouched displayed default | Override stays null and continues following estimate. |
-| Explicit manual amount equal to estimate | Non-null override and reason persist, even though displayed amounts match. |
+| Explicit manual amount equal to estimate | Non-null override persists with its optional reason, even though effective amounts match. |
 | Restore estimate using explicit null override | Reason clears, next quantity change updates effective amount. |
 | Price null, override null / override 0 | Unknown / known zero; both may be ordered. |
-| Override without reason or negative / overprecision amount | 422, no quantity or amount changes. |
+| Override without reason, or with null / blank reason | Save amount (including zero) and null reason; no reason is required. |
+| Clear reason on an existing manual amount | Amount remains; reason becomes null, including in exports; audit history remains. |
+| Negative / overprecision amount, reason over 500 trimmed characters, nonblank reason with null override, or reason-only edit without an override | 422, no quantity or amount changes. |
 | Requested 4, Ordered 5, received 2, cancel and return | Draft grows by 3 atomically; stored manual amount and historical spend do not reduce. |
 | Headerless old receipt against changed Ordered Qty | 409 upgrade requirement, inventory unchanged. |
 | Historical Requested/Ordered 1000000.00 | Read/backfill remains 1000000.00 without clamping; a new explicit edit to 1000000.00 is 422. |
 | Two saves / Save racing Mark as Ordered | One serializable winner; stale or non-Approved request conflicts, never partial state. |
+
+## Optional reason compatibility and rollout
+
+The 2026-10-19 amendment relaxes only Actual Total Reason. Cancellation reasons
+remain required under their existing contracts. No new fields, manual-source flag,
+pricing rules, permissions or infrastructure are introduced; historical amounts
+and reasons are not rewritten. Quantity-only saves, partial receipts, cancellation
+and amount aggregation retain their established behavior.
+
+1. Merge this contract after validation/review and user-confirmed CI. The contract
+   alone does not mean a deployed API accepts missing reasons.
+2. API adds a new migration relaxing the existing reason constraint, allowing a
+   non-null override with a null reason. Keep nonblank length/trim constraints and
+   require null reason when there is no override; do not edit a deployed migration.
+   Verify upgrade, historical data preservation and the database invariant locally.
+3. API validation and atomic Save accept the normalized optional reason, retain
+   versions/audit/authorization, and preserve successful historical idempotent
+   replays without modifying their fingerprints or snapshots. Existing clients
+   that still send a reason remain valid. Unknown-outcome retries keep their
+   original request and key, as before.
+4. After the user confirms API CI, migration and deployed candidate, Web removes
+   required-reason validation and sends blank input as null. Retain the maximum
+   length check and inline errors. Do not enable optional submission against the
+   older API; it will reject missing reasons.
+5. Database downgrade must refuse if any manual override has a null reason,
+   because the old constraint cannot represent those records. Do not invent a
+   reason, clear amounts or delete rows to make rollback succeed. Retain the
+   compatible API/schema while such data exists; disabling Web editing is safe.
+
+Supporting verification should reuse existing tests: schema-level missing/null/
+blank/nonblank/overlength validation, a representative atomic save and reason
+clear/readback, unchanged quantity-only behavior, migration constraints and empty
+reason exports. Avoid duplicating the full receipt or authorization matrix solely
+for this relaxation. Page acceptance remains user-owned after API/Web deployment.
 
 ## Approved item Cancel compatibility
 
