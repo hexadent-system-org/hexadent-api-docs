@@ -2,8 +2,8 @@
 
 `GET /v1/purchase-lists` keeps its route, query parameters, pagination, `counts`,
 sort order, and existing list fields. Each object in the page's `items` array
-adds required `previewItems`. The array contains **every** item snapshot in
-that Purchase List, even when the client displays only a few rows on a card.
+adds required `previewItems`. The array contains **every non-cancelled** item snapshot in
+that Purchase List (excluding cancellations at every stage), even when the client displays only a few rows on a card.
 The page still paginates Purchase Lists, not their preview items.
 
 Each preview item contains `id`, `productName`, nullable `containedQuantity`
@@ -34,13 +34,18 @@ Approved edits and freezes at ordering. Content, product and price snapshots
 remain immutable; Requested Qty is not relabeled as ordered. No amount data is
 added to previews; full quantity/price/manual-amount data comes from detail.
 
-## Approved item removal and empty cards
+## Approved cancellation history and zero active items
 
-[Approved item Cancel](purchase-item-cancellation.md) removes the row from current
-`items` and `previewItems`, and decrements `itemCount`; it does not add a Cancelled
-preview. Requested/product/price snapshots on remaining rows stay immutable.
-After the last removal, keep the Approved card with `itemCount=0`, `previewItems=[]`,
-zero current amount and no receipt percentage/bar. It still counts as an Approved
-list until the user deletes it. All consumers must handle empty arrays before
-Approved removal is enabled; do not dereference the first preview unconditionally.
-Ordered/Completed cards retain cancelled rows and the existing receipt rules.
+[Approved item Cancel](purchase-item-cancellation.md) retains the database row,
+but the backend excludes cancellations before ordering from `items`, `previewItems`,
+`itemCount`, `cancelledItemCount` and receipt counts, even after the list is ordered.
+Post-order cancellations remain visible in detail and counted in summary; detail places them last with
+Cancelled and Reason. Card previews exclude all cancelled items, including post-order
+cancellations. An all-cancelled Ordered/Completed card has an empty preview but keeps
+its original total/cancelled counts and actions; preview length is not the total item count. Preview rows do not
+add a cancellation field; use summary counts, not previews, for orderability.
+When `itemCount == cancelledItemCount`, disable Mark as Ordered but retain the
+Approved card and whole-list Cancel. Effective order amount is zero; historical
+snapshots remain. Whole-list Cancel restores only active rows to Draft and retains the
+parent and all historical rows in the database; its detail uses the same visibility rule. Empty arrays remain supported. Ordered/Completed receipt
+progress and post-order cancellation accounting remain unchanged.

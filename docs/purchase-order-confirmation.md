@@ -87,7 +87,7 @@ Example explicit Save:
 
 Return `200 PurchaseListDetail` with current list and item versions. Lock the
 parent list before its item, compare both versions, and require Approved state;
-order/cancel, empty-list deletion and competing saves serialize on that parent. A material change
+order/cancel and competing saves serialize on that parent. A material change
 increments list and item versions and updates list `updatedAt`; immutable product,
 price, submitted-by and approver snapshots do not change. No inventory, activity
 or receipt is created. A current-version no-op completes idempotency but does not
@@ -139,14 +139,14 @@ stock only, never Ordered Qty or item amount. Cancel with return-to-Draft restor
 Qty, following its existing metadata and submitted-by conflict rules. Ordered
 item cancellation retains its existing optional return choice, metadata rules,
 reason, no-receive/no-correction rule, idempotency and atomic Draft merge. Approved item Cancel restores all saved Ordered Qty (Requested 4 / Ordered 5
-returns 5), removes the row and requires the cancellation capability header.
+returns 5), retains the cancelled row/reason and requires the cancellation capability header.
 Single-item submitter conflicts may be explicitly confirmed against the current
 Draft ID/version; whole-list conflicts remain blocking. Overflow or an
 unconfirmed/stale merge conflict rolls the whole cancellation back.
 
 Neither partial receiving nor Ordered item cancellation reduces the confirmed
-item amount or infers a refund. Approved item Cancel removes that row and its
-amount from the current list, as defined in the [cancellation contract](purchase-item-cancellation.md). Quantity progress and active incoming exclude cancelled items as
+item amount or infers a refund. Approved item Cancel retains the snapshot but excludes its
+amount from effective procurement, including when the parent is later ordered, as defined in the [cancellation contract](purchase-item-cancellation.md). Quantity progress and active incoming exclude cancelled items as
 before; money and inventory movement are separate. There is no new refund field.
 
 ## Read surfaces, money and export
@@ -315,7 +315,18 @@ for this relaxation. Page acceptance remains user-owned after API/Web deployment
 
 The [cancellation extension](purchase-item-cancellation.md) independently requires
 `X-Purchase-Cancellation-Version: 1` for Approved item Cancel, single-item Draft
-submitter overwrite confirmation and empty Approved deletion. It does not replace
+submitter overwrite confirmation. It does not replace
 `X-Purchase-Confirmation-Version: 1` where this contract requires it. Old successful
-replays remain first. An empty Approved list cannot be ordered or whole-list
-cancelled (`PURCHASE_LIST_EMPTY`); it stays visible until manually deleted.
+replays remain first. An empty Approved list cannot be ordered
+(`PURCHASE_LIST_EMPTY`); it stays visible until the user invokes the existing
+whole-list Cancel. That action retains the list and its approval history as
+Cancelled, skips Draft restoration and returns `restoredDraftItems=[]`. No separate
+Delete action or endpoint is provided.
+
+Approved cancellation records remain in the database but are excluded by the backend
+from current detail/card/Dashboard items and counts, including after ordering. Card previews
+additionally omit all post-order cancellations while preserving summary counts. Complete
+checks `expectedItemVersions` against the visible GET detail collection. If a refreshed
+list omits an item with unsaved edits, keep an explicit recovery notice with Discard
+changes; an unknown Save must first retry its original payload/key, even if the list
+has since changed status. Do not silently drop edits or leave actions permanently blocked.
