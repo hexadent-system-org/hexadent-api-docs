@@ -2,8 +2,8 @@
 
 `GET /v1/purchase-lists` keeps its route, query parameters, pagination, `counts`,
 sort order, and existing list fields. Each object in the page's `items` array
-adds required `previewItems`. The array contains **every visible** item snapshot in
-that Purchase List (excluding cancellations before ordering), even when the client displays only a few rows on a card.
+adds required `previewItems`. The array contains **every non-cancelled** item snapshot in
+that Purchase List (excluding cancellations at every stage), even when the client displays only a few rows on a card.
 The page still paginates Purchase Lists, not their preview items.
 
 Each preview item contains `id`, `productName`, nullable `containedQuantity`
@@ -39,8 +39,10 @@ added to previews; full quantity/price/manual-amount data comes from detail.
 [Approved item Cancel](purchase-item-cancellation.md) retains the database row,
 but the backend excludes cancellations before ordering from `items`, `previewItems`,
 `itemCount`, `cancelledItemCount` and receipt counts, even after the list is ordered.
-Post-order cancellations remain visible and counted; detail places them last with
-Cancelled and Reason. Cards use the same visible collection as detail and Dashboard. Preview rows do not
+Post-order cancellations remain visible in detail and counted in summary; detail places them last with
+Cancelled and Reason. Card previews exclude all cancelled items, including post-order
+cancellations. An all-cancelled Ordered/Completed card has an empty preview but keeps
+its original total/cancelled counts and actions; preview length is not the total item count. Preview rows do not
 add a cancellation field; use summary counts, not previews, for orderability.
 When `itemCount == cancelledItemCount`, disable Mark as Ordered but retain the
 Approved card and whole-list Cancel. Effective order amount is zero; historical

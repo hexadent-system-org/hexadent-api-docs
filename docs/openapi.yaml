@@ -4393,7 +4393,7 @@ components:
           allOf: [*id015]
           description: 实际订货量，新实时预览始终返回，旧响应缺省时回退plannedQuantity。
     PurchaseListPageItem:
-      description: 仅 `GET /purchase-lists` 的分页条目；继承原有 Summary 字段并增加全部可见商品预览。Dashboard 等 Summary 使用方没有 `previewItems` 契约。
+      description: 仅 `GET /purchase-lists` 的分页条目；继承原有 Summary 字段并增加全部未取消商品预览。Dashboard 等 Summary 使用方没有 `previewItems` 契约。
       allOf:
       - $ref: '#/components/schemas/PurchaseListSummary'
       - type: object
@@ -4403,7 +4403,7 @@ components:
             type: array
             minItems: 0
             items: {$ref: '#/components/schemas/PurchaseListPreviewItem'}
-            description: 清单内全部可见商品行；后端排除下单前取消项，即使清单随后下单。包含超过卡片展示行数的商品；不截断。顺序沿用 Purchase List item 顺序。
+            description: 清单内全部未取消商品行；后端排除所有阶段的取消项。Ordered详情与计数仍包含下单后取消行，previewItems长度不代表itemCount；全部取消时预览为空。包含超过卡片展示行数的商品；不截断。顺序沿用 Purchase List item 顺序。
     PurchaseListDetail:
       description: items 与 summary 计数统一排除下单前取消行；数据库保留记录。下单后取消行继续展示。历史成功幂等快照不改写，客户端成功后 GET 获取当前投影。
       allOf:

@@ -324,7 +324,8 @@ Cancelled, skips Draft restoration and returns `restoredDraftItems=[]`. No separ
 Delete action or endpoint is provided.
 
 Approved cancellation records remain in the database but are excluded by the backend
-from current detail/card/Dashboard items and counts, including after ordering. Complete
+from current detail/card/Dashboard items and counts, including after ordering. Card previews
+additionally omit all post-order cancellations while preserving summary counts. Complete
 checks `expectedItemVersions` against the visible GET detail collection. If a refreshed
 list omits an item with unsaved edits, keep an explicit recovery notice with Discard
 changes; an unknown Save must first retry its original payload/key, even if the list

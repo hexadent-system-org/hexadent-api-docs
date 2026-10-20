@@ -120,7 +120,7 @@ Requested4、Ordered5、Received2，取消并回Draft仅增加3；Ordered 没有
 
 退回数量为全部已保存 `orderedQuantity`：Requested=4、Ordered=5，退5；不依据原 Requested 或未保存输入。新 Draft 的 submittedByName 复制 item，其他采购 metadata 沿用单项 Cancel 的 null 规则，不复制人工金额/原因；已有 Draft 数量相加且保留 vendor 等 metadata。新建或合并超999999.99整次失败，沿用单项数量上限；整单历史恢复例外不扩展到单项。重新建单走正常审批，不能保留原单的金额覆盖或绕过审批。
 
-后端统一从清单 `items`、`previewItems`、`itemCount`、`cancelledItemCount` 和 `receiptCounts` 排除下单前取消行，Dashboard 同步此口径；下单后取消行仍计入可见集合及取消数。单项取消响应的独立 `purchaseListItem` 仍返回完整取消记录，即使它不再出现在内嵌清单中。有效项为未取消行，仅有效项参与 Approved 下单、整单回 Draft、CSV/PDF 导出和在途汇总。已取消项不参与 In active list 和 Approved 库存删除阻拦。整单取消不重复退回已取消项。
+后端统一从清单 `items`、`previewItems`、`itemCount`、`cancelledItemCount` 和 `receiptCounts` 排除下单前取消行，Dashboard 同步此口径；下单后取消行仍计入详情可见集合及取消数；但卡片 previewItems 额外排除所有阶段的取消项，不改变 summary 计数，全部取消时预览为空。单项取消响应的独立 `purchaseListItem` 仍返回完整取消记录，即使它不再出现在内嵌清单中。有效项为未取消行，仅有效项参与 Approved 下单、整单回 Draft、CSV/PDF 导出和在途汇总。已取消项不参与 In active list 和 Approved 库存删除阻拦。整单取消不重复退回已取消项。
 
 未新增取消阶段字段：`cancelled_at` 非空且 `ordered_at` 为空或 `cancelled_at < ordered_at` 表示下单前取消。即使父清单后来 Ordered/Completed，仍从当前读取集合隐藏这些行，并排除实际采购支出和参考价格，以及库存删除阻拦；Ordered 阶段取消保留既有金额和库存阻拦规则，不推断退款。原始数量/金额快照不会改写为0。
 
