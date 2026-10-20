@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: HexaDent AI Inventory Platform API
-  version: 0.6.0
+  version: 0.7.2
   description: Web、iOS 与 Android MVP 的统一业务 API Contract。Purchase List 章节是 contract-first replacement，runtime 尚未实现。生产域名待定。
 servers:
 - url: /v1
@@ -40,6 +40,7 @@ tags:
 - name: Inventory - Activities
 - name: Inventory - Imports
 - name: Purchase Lists
+  description: 订货量与单项金额扩展见 purchase-order-confirmation.md；提交人及业务审批人姓名契约见 purchase-actor-names.md；契约先行，运行时可用性以部署候选为准。
 - name: Dashboard
   description: 4 个独立只读模块；2026-09-23 确认的 contract-first replacement，运行时由后续任务实现。详见 dashboard-contract.md。
 - name: Analytics
@@ -1227,7 +1228,7 @@ paths:
       tags: [Purchase Lists]
       operationId: addPurchaseDraftItems
       summary: 批量加入 shared Purchase Draft
-      description: 所有 active Member 可写。每次请求最多 100 items；每个 `plannedQuantity` 最大为 `999999.99`。每行可选传用户设置的 `priority`（low、medium、high）；省略或显式 null 均保存为 null，表示未标记，不自动分配档位。枚举外的非空值返回 `REQUEST_VALIDATION_ERROR` 422。请求全有或全无，任何 422 都不写入。每个 Inventory Item 在 Draft 最多一行。已存在项不会累加，也不会被请求中的 priority 或其他字段覆盖；成功响应返回其当前 item 与 version。需要修改已有行时使用带 `expectedVersion` 的 PATCH。同一请求重复 `inventoryItemId`（即使其他字段不同）返回 `REQUEST_VALIDATION_ERROR` 422，整批不写入。
+      description: 所有 active Member 可写。每次请求最多 100 items；每个 `plannedQuantity` 最大为 `999999.99`。每行必须传非空 `submittedByName`；省略、null、空字符串或纯空白返回 REQUEST_VALIDATION_ERROR 422，整批不写入。姓名为单行，原始输入最多 100 字符，折叠连续空白并 trim。Web 批量输入同一姓名时复制到每个请求 item，不增加批次级字段。每行可选传用户设置的 `priority`（low、medium、high）；省略或显式 null 均保存为 null，表示未标记，不自动分配档位。枚举外的非空值返回 `REQUEST_VALIDATION_ERROR` 422。请求全有或全无，任何 422 都不写入。每个 Inventory Item 在 Draft 最多一行。已存在项不会累加，也不会被请求中的 submittedByName、priority 或其他字段覆盖；成功响应返回其当前 item 与 version。需要修改已有行时使用带 `expectedVersion` 的 PATCH。同一请求重复 `inventoryItemId`（即使其他字段不同）返回 `REQUEST_VALIDATION_ERROR` 422，整批不写入。
       parameters: [*id006]
       requestBody:
         required: true
@@ -1238,6 +1239,7 @@ paths:
               items:
               - inventoryItemId: 11111111-1111-4111-8111-111111111111
                 plannedQuantity: '5.00'
+                submittedByName: Alice
                 priority: high
                 vendor: K-Dental
                 vendorItemNumber: KD-49135
@@ -1245,6 +1247,7 @@ paths:
                 notes: Order before Friday
               - inventoryItemId: 22222222-2222-4222-8222-222222222222
                 plannedQuantity: '2.00'
+                submittedByName: Alice
                 vendor: null
                 vendorItemNumber: null
                 unitPrice: null
@@ -1265,7 +1268,7 @@ paths:
       tags: [Purchase Lists]
       operationId: updatePurchaseDraftItem
       summary: 更新 shared Draft item
-      description: '`plannedQuantity` 是保存后的最终 total，不是 delta，最大为 `999999.99`；可单独将用户设置的 `priority` 改为 low、medium、high，或显式传 null 清空标记。省略 priority 时保持原值；其他未提供的可选字段同样保持不变，显式 null 仅清空可空字段。首次执行新的幂等请求时先校验 `expectedVersion`；stale version 即使提交值与当前值相同也返回 `PURCHASE_DRAFT_VERSION_CONFLICT`。只有当前 version 且提交值与当前持久化值相同时返回当前 item，`version` 和 `updatedAt` 不变；该 200 no-op 会完成幂等记录。已完成的相同 key 与 material payload 重试回放原结果。'
+      description: '`plannedQuantity` 是保存后的最终 total，不是 delta，最大为 `999999.99`；`submittedByName` 可单独修改，省略保持不变，显式 null、空字符串或纯空白返回 REQUEST_VALIDATION_ERROR 422，不得清空，非空值按姓名规则规范化；实际姓名变化更新 version/updatedAt 及真实 updatedBy，审批同时校验 Draft version；可单独将用户设置的 `priority` 改为 low、medium、high，或显式传 null 清空标记。省略 priority 时保持原值；其他未提供的可选字段同样保持不变，显式 null 仅清空可空字段。首次执行新的幂等请求时先校验 `expectedVersion`；stale version 即使提交值与当前值相同也返回 `PURCHASE_DRAFT_VERSION_CONFLICT`。只有当前 version 且提交值与当前持久化值相同时返回当前 item，`version` 和 `updatedAt` 不变；该 200 no-op 会完成幂等记录。已完成的相同 key 与 material payload 重试回放原结果。'
       parameters:
       - &id007
         name: draftItemId
@@ -1310,7 +1313,7 @@ paths:
       tags: [Purchase Lists]
       operationId: listPurchaseLists
       summary: 查询 Purchase Lists
-      description: 所有 active Member 可读。Cancelled 不出现在 MVP 列表。每个分页条目的 `previewItems` 返回该清单的全部商品快照，不按商品数截断；商品名下方的内容量由 `containedQuantity`、`containedUnitName` 和 `unitName` 表示，不使用自由文本 `specification`。仅此分页列表条目包含预览。`keyword` 先做 Unicode NFKC、连续空白折叠和大小写归一化，再仅对 List name 做包含搜索；notes 和 item snapshot 字段不参与搜索。默认按 `updatedAt DESC, id DESC` 稳定排序。
+      description: 所有 active Member 可读。Cancelled 不出现在 MVP 列表。空Approved保留在列表和counts中，itemCount=0、previewItems=[]；每个分页条目的 `previewItems` 返回该清单的全部当前商品快照，不按商品数截断；商品名下方的内容量由 `containedQuantity`、`containedUnitName` 和 `unitName` 表示，不使用自由文本 `specification`。仅此分页列表条目包含预览。`keyword` 先做 Unicode NFKC、连续空白折叠和大小写归一化，再仅对 List name 做包含搜索；notes 和 item snapshot 字段不参与搜索。默认按 `updatedAt DESC, id DESC` 稳定排序。
       parameters:
       - name: status
         in: query
@@ -1329,22 +1332,33 @@ paths:
       tags: [Purchase Lists]
       operationId: approvePurchaseDraftItems
       summary: 审批所选 Draft items 并创建 Purchase List
-      description: 仅 actual actor 为 Admin/Manager 时允许。selected approver 必须是同 Organization 的 active Admin/Manager。服务端在单一幂等事务校验全部 item version、创建 Approved snapshot 并移除所选 Draft items；任一失败均不产生部分写入。同一请求重复 `draftItemId`（即使 expectedVersion 不同）返回 `REQUEST_VALIDATION_ERROR` 422，不创建 List 或移除 Draft item。
+      description: 仅 actual actor 为 Admin/Manager 时允许。必须且只能提供 selectedApproverMembershipId 或 selectedApproverName：成员方式仍要求同 Organization 的 active Admin/Manager，手填方式要求非空单行姓名且不创建成员、不授予权限；不能双方缺失、传 null 或同时提供。不要求各商品已有非空提交人；旧 Draft 的 submittedByName 为 null 也可审批。服务端保存业务审批人姓名与每行 submittedByName 的不可变快照，approvedBy 和 audit 仍为真实登录账号。成员后续改名不影响业务姓名快照。服务端在单一幂等事务校验全部 item version、创建 Approved snapshot 并移除所选 Draft items；任一失败均不产生部分写入。同一请求重复 `draftItemId`（即使 expectedVersion 不同）返回 `REQUEST_VALIDATION_ERROR` 422，不创建 List 或移除 Draft item。
       parameters: [*id006]
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/PurchaseListApprovalRequest'}
-            example:
-              name: September restorative order
-              notes: Approved for weekly purchasing
-              selectedApproverMembershipId: 33333333-3333-4333-8333-333333333333
-              draftItems:
-              - draftItemId: 44444444-4444-4444-8444-444444444444
-                expectedVersion: 3
+            examples:
+              member:
+                summary: 选择现有有效审批成员
+                value:
+                  name: September restorative order
+                  notes: Approved for weekly purchasing
+                  selectedApproverMembershipId: 33333333-3333-4333-8333-333333333333
+                  draftItems:
+                  - draftItemId: 44444444-4444-4444-8444-444444444444
+                    expectedVersion: 3
+              manual:
+                summary: 登记共用账号之外的业务审批人姓名
+                value:
+                  name: September restorative order
+                  selectedApproverName: Alice
+                  draftItems:
+                  - draftItemId: 44444444-4444-4444-8444-444444444444
+                    expectedVersion: 3
       responses:
-        '201': {description: 新建 Approved Purchase List；仅清单名称和备注可在 Approved 状态编辑, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
+        '201': {description: 新建 Approved Purchase List；Approved名称/备注及独立item confirmation可编辑，Requested/价格等原快照保持, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
         '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '403': {description: actor 或 selected approver 不满足权限要求, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '404': {description: 任一资源在当前 Organization 下不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
@@ -1386,12 +1400,38 @@ paths:
         '404': {description: 当前 Organization 下不存在；跨租户 ID 同样返回 404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '409': {description: List state 或 version 冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '422': {description: 字段未通过校验或未提供可编辑字段, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+    delete:
+      tags: [Purchase Lists]
+      operationId: deleteEmptyApprovedPurchaseList
+      summary: 手动删除空 Approved List
+      description: >-
+        所有active Member可执行。仅Approved、当前items为空且无receipt history可删除；不转Cancelled、不写Draft或Inventory。
+        收货历史存在返回PURCHASE_LIST_RECEIPTS_PREVENT_CANCELLATION。List锁内校验expectedListVersion与空集合，和item Cancel/confirmation/Mark as Ordered串行；非空返回PURCHASE_LIST_NOT_EMPTY，其他状态返回PURCHASE_LIST_STATE_CONFLICT。
+        要求Idempotency-Key和X-Purchase-Cancellation-Version=1。成功重放先于资源查询，即使List已删除仍返回原200；新key访问不存在/跨组织List均404。
+        同组织operation/key/payload重放不重新删除；改变List ID或expectedListVersion复用key返回IDEMPOTENCY_CONFLICT。删除后GET/列表/Dashboard均不再返回该清单；已有成功幂等快照不改写。
+      parameters:
+      - *id008
+      - *id006
+      - {$ref: '#/components/parameters/PurchaseCancellationVersion'}
+      - name: expectedListVersion
+        in: query
+        required: true
+        schema: {type: integer, minimum: 1, maximum: 9223372036854775807}
+      responses:
+        '200': {description: 空清单已删除，可幂等重放, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDeletionResult'}}}}
+        '401': {description: Access Token缺失、无效或过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership或Organization不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前Organization下不存在；跨组织ID同样404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List非空、状态/版本、能力或幂等冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: 缺失或非法版本/请求字段, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '503': {description: 依赖不可用且无部分写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-lists/{purchaseListId}/order:
+    parameters: [{$ref: '#/components/parameters/PurchaseConfirmationVersion'}]
     post:
       tags: [Purchase Lists]
       operationId: orderPurchaseList
       summary: 将 Approved List 标记为 Ordered
-      description: 所有 active Member 可执行；只允许 `approved → ordered`，内容 snapshot 不变。
+      description: 所有 active Member 可执行；只允许非空清单 `approved → ordered`，空Approved返回409 PURCHASE_LIST_EMPTY且无写入；冻结已保存的orderedQuantity、actualTotalOverride与原因；原Requested/商品/价格快照不变。 新契约以orderedQuantity计算履约；新操作在相关记录需求/订货量不一致或有手填金额时要求确认能力header，不支持则409 PURCHASE_CONFIRMATION_CLIENT_REQUIRED；历史成功幂等重放保持，详见purchase-order-confirmation.md。
       parameters: [*id008, *id006]
       requestBody:
         required: true
@@ -1404,11 +1444,12 @@ paths:
         '409': {description: List state/version 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '422': {description: 请求未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-lists/{purchaseListId}/cancellation:
+    parameters: [{$ref: '#/components/parameters/PurchaseConfirmationVersion'}]
     post:
       tags: [Purchase Lists]
       operationId: cancelPurchaseList
       summary: 取消未收货的 Approved List
-      description: 所有 active Member 可执行。仅 Approved 且没有 receipt history 时允许；保留 Cancelled snapshot，并在同一事务把 planned quantities 恢复到 shared Draft。若 Inventory Item 已有 Draft row，只累加 plannedQuantity，并保留该 row 当前的 vendor、vendorItemNumber、unitPrice、notes 和 priority（包括 null）；合计超过 `999999.99` 时返回 409，用户需先减少当前 Draft quantity。若没有 Draft row，则从 Cancelled item snapshot 初始化 metadata，新 Draft row 的 priority 为 null，不自动标记；为了兼容上限生效前的不可变历史 snapshot，此恢复可保留超过当前输入上限的旧值，用户之后只能将其修改到 `999999.99` 以内。任一失败均不产生部分写入。
+      description: 所有 active Member 可执行。仅非空 Approved 且没有 receipt history 时允许；空Approved返回PURCHASE_LIST_EMPTY，应使用空清单DELETE；仅恢复当前仍存在的商品，不能重复恢复已单项移除商品。保留 Cancelled snapshot，并在同一事务把 ordered quantities 恢复到 shared Draft。若 Inventory Item 已有 Draft row，先按 purchase-actor-names.md 的规范化比较提交人；不同或仅一方为空时返回 PURCHASE_DRAFT_SUBMITTER_CONFLICT，整单取消和全部 Draft 恢复均回滚。相同或双方为空时才累加 plannedQuantity，并保留该 row 当前的 vendor、vendorItemNumber、unitPrice、notes 和 priority（包括 null）；合计超过 `999999.99` 时返回 409，用户需先减少当前 Draft quantity。若没有 Draft row，则从 Cancelled item snapshot 初始化 metadata（含 submittedByName），新 Draft row 的 priority 为 null，不自动标记；为了兼容上限生效前的不可变历史 snapshot，此恢复可保留超过当前输入上限的旧值，用户之后只能将其修改到 `999999.99` 以内。任一失败均不产生部分写入。 新契约以orderedQuantity计算履约；新操作在相关记录需求/订货量不一致或有手填金额时要求确认能力header，不支持则409 PURCHASE_CONFIRMATION_CLIENT_REQUIRED；历史成功幂等重放保持，详见purchase-order-confirmation.md。
       parameters: [*id008, *id006]
       requestBody:
         required: true
@@ -1421,31 +1462,63 @@ paths:
         '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '404': {description: 当前 Organization 下不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
-        '409': {description: List state/version、receipt history 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409':
+          description: List state/version、receipt history、Draft 提交人/数量或幂等请求冲突
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+              examples:
+                submitterConflict:
+                  summary: 提交人不同，取消和退回均未提交
+                  value:
+                    error:
+                      code: PURCHASE_DRAFT_SUBMITTER_CONFLICT
+                      message: 'This product is already in Draft with a different submitter (Draft: Alice; returning item: Bob). Check Draft and confirm with the people involved before adjusting the quantity.'
+                      requestId: 01K-PURCHASE-EXAMPLE
+                      details:
+                        purchaseListId: 55555555-5555-4555-8555-555555555555
+                        purchaseListItemId: 77777777-7777-4777-8777-777777777777
+                        inventoryItemId: 11111111-1111-4111-8111-111111111111
+                        draftItemId: 44444444-4444-4444-8444-444444444444
+                        draftSubmittedByName: Alice
+                        returningSubmittedByName: Bob
         '422': {description: 请求未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-lists/{purchaseListId}/completion:
+    parameters: [{$ref: '#/components/parameters/PurchaseConfirmationVersion'}]
     post:
       tags: [Purchase Lists]
       operationId: completePurchaseList
       summary: 完成 Ordered Purchase List
-      description: 所有 active Member 可执行。允许 zero-received、short、exact 和 over；存在 variance 且 `confirmVariance=false` 时返回 `PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED` 与 summary。确认后只转换状态并写 audit，不调整 Inventory。
+      description: 所有 active Member 可执行。仅 Ordered 且所有 item 已收齐（含超收）或 isCancelled=true 时允许手动完成；仍有未取消的 short/zero item 时返回 PURCHASE_LIST_ITEMS_PENDING，不允许通过确认差异绕过。只转换状态并写 audit，不调整 Inventory。expectedItemVersions 可省略以兼容已有 API 客户端；提供时必须与当前全部 item versions 完全一致。已 Completed 返回原只读详情和 alreadyCompleted=true，不重开历史短收单。 新契约以orderedQuantity计算履约；新操作在相关记录需求/订货量不一致或有手填金额时要求确认能力header，不支持则409 PURCHASE_CONFIRMATION_CLIENT_REQUIRED；历史成功幂等重放保持，详见purchase-order-confirmation.md。
       parameters: [*id008, *id006]
       requestBody:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListCompletionRequest'}}}
       responses:
-        '200': {description: Completed Purchase List, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
+        '200': {description: Completed Purchase List, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListCompletionResult'}}}}
         '401': {description: Access Token 缺失、无效或已过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '404': {description: 当前 Organization 下不存在, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
-        '409': {description: List state/version、variance confirmation 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: List state/version、待收货 item、收货快照或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '422': {description: 请求未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-lists/{purchaseListId}/export:
     get:
       tags: [Purchase Lists]
       operationId: exportPurchaseList
       summary: 导出 Purchase List snapshot
-      description: 所有 active Member 仅可导出 Approved List，最多 1,000 items；Ordered、Completed 和 Cancelled 均不可导出，并返回说明仅 Approved 可导出的 409。CSV 是带 BOM 的 UTF-8、RFC 4180 单一 header + data rows 表格，List name 只通过下载文件名表达，不添加 metadata preamble；为防止 spreadsheet formula injection，Vendor Item Number、Vendor、Description、Unit 中忽略前导空白及 Unicode control/format 字符后以 `=`、`+`、`-`、`@` 开头的值会添加 apostrophe 安全前缀，机器消费者应以 `utf-8-sig` 解码并保留该转换。CSV header 与 PDF item table 固定为 Vendor Item Number、Vendor、Description、Unit、Qty、Unit Price、Total Price；Description 是 Product Name snapshot，Qty 是 planned quantity，Total Price 使用 Decimal 精确计算为 Qty × Unit Price，Unit Price 为空时 Total Price 也为空。PDF header 固定为 List name、actual approver、approved at 和 notes，并为长内容分页、换行和重复 item table header。若 snapshot 含当前 PDF 字体无法呈现的字符，PDF 返回非重试型 422 并提示改用 CSV；其他文件生成依赖失败仍返回安全、可重试的 503。响应必须设置正确 Content-Type，并使用 `filename` ASCII fallback 与 RFC 5987 `filename*` UTF-8 编码支持 Unicode List name。
+      description: >-
+        所有 active Member 仅可导出 Approved List，最多 1,000 items；移除商品不导出，空Approved导出CSV仅header、PDF保留页头及空表，商品数/合计为0；Ordered、Completed 和 Cancelled 均不可导出，并返回说明仅 Approved 可导出的 409。
+        CSV 是带 BOM 的 UTF-8、RFC 4180 单一 header + data rows 表格，List name 只通过下载文件名表达，不添加 metadata preamble。
+        CSV header 顺序固定为 Vendor Item Number、Vendor、Description、Unit、Requested Qty、Ordered Qty、Unit Price、Est. Total、Actual Total、Actual Total Reason、Submitted By、Approved By。
+        PDF item table 使用相同前十一列；Approved By 保留在 PDF 页头。此格式取代原 Qty / Total Price 列，不保留旧列别名。
+        Requested Qty 为不可变plannedQuantity；Ordered Qty为orderedQuantity；Description为Product Name snapshot；Unit Price为原单价快照。
+        Est. Total为orderedQuantity × unitPrice；Actual Total优先actualTotalOverride，null时回退估算；两个总价均half-up至两位。
+        未知金额输出空单元格；手填0输出0.00，缺单价但有手填金额仍输出Actual Total，此时Est. Total为空。
+        Actual Total Reason输出actualTotalReason，未填写原因时为空（人工覆盖存在时也可为空）；恢复预估后原因也为空。Submitted By取item.submittedByName快照（null为空），Approved By取selectedApprover.displayName快照并在CSV每行重复；真实approvedBy账号不替代业务姓名。
+        为防止spreadsheet formula injection，Vendor Item Number、Vendor、Description、Unit、Actual Total Reason、Submitted By、Approved By中忽略前导空白及Unicode control/format字符后以`=`、`+`、`-`、`@`开头的值添加apostrophe安全前缀；机器消费者以utf-8-sig解码并保留该转换。
+        PDF header固定为List name、Approved By、approved at和notes；所有商品字段及长原因须可读换行、分页和重复item table header，不截断或重叠。
+        所有文本含Actual Total Reason均参与PDF字符支持检查；无法呈现的字符返回非重试型422 PDF_EXPORT_UNSUPPORTED_CHARACTERS并提示改用CSV，其他生成失败返回安全可重试的503。
+        响应设置正确Content-Type及Content-Disposition，使用filename ASCII fallback与RFC 5987 filename* UTF-8编码支持Unicode List name。
       parameters:
       - *id008
       - name: format
@@ -1471,11 +1544,12 @@ paths:
         '422': {description: format 未通过校验，或 PDF snapshot 含当前字体无法呈现的字符（`PDF_EXPORT_UNSUPPORTED_CHARACTERS`，可改用 CSV）, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '503': {description: 文件生成依赖暂不可用, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-list-items/{itemId}/receipts:
+    parameters: [{$ref: '#/components/parameters/PurchaseConfirmationVersion'}]
     post:
       tags: [Purchase Lists]
       operationId: receivePurchaseListItem
       summary: 记录 Ordered item 的一次收货
-      description: 所有 active Member 可执行。`quantityReceived` 必须大于 0、最多两位小数且不超过 `999999.99`；允许 over-receipt。单一事务更新 Inventory 与 List Item，写入不可变 event 和 Inventory Activity。变更后的 Inventory `quantityOnHand` 不得超出 Inventory 支持范围。over-receipt 以成功响应中的结构化 warning 表达。
+      description: 所有 active Member 可执行。Cancelled item 拒绝新 Receive（PURCHASE_ITEM_CANCELLED）；已成功操作的同 key/同 payload 幂等重放仍返回原结果。`quantityReceived` 必须大于 0、最多两位小数且不超过 `999999.99`；允许 over-receipt。单一事务更新 Inventory 与 List Item，写入不可变 event 和 Inventory Activity。变更后的 Inventory `quantityOnHand` 不得超出 Inventory 支持范围。over-receipt 以成功响应中的结构化 warning 表达。 新契约以orderedQuantity计算履约；新操作在相关记录需求/订货量不一致或有手填金额时要求确认能力header，不支持则409 PURCHASE_CONFIRMATION_CLIENT_REQUIRED；历史成功幂等重放保持，详见purchase-order-confirmation.md。
       parameters:
       - &id009
         name: itemId
@@ -1495,11 +1569,12 @@ paths:
         '422': {description: quantity、变更后的 Inventory quantity、date 或 request field 未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '503': {description: Inventory Activity dependency 暂不可用且事务未写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /purchase-list-items/{itemId}/receipt-corrections:
+    parameters: [{$ref: '#/components/parameters/PurchaseConfirmationVersion'}]
     post:
       tags: [Purchase Lists]
       operationId: correctPurchaseListItemReceiptTotal
       summary: 设定 Ordered item 的累计实收总数
-      description: 所有 active Member 可执行。服务端锁定记录后以 `totalReceived - currentTotal` 计算 delta；total 可为 0，但不得超过 `999999.99`。相同 total 是 no-op，不创建 event/Activity，也不增加任何 version。非零 delta 原子调整 Inventory；变更后的 Inventory `quantityOnHand` 不得小于 0 或超出 Inventory 支持范围。
+      description: 所有 active Member 可执行。Cancelled item 拒绝新 Correction，包括相同 total 的 no-op（PURCHASE_ITEM_CANCELLED）；已成功操作的同 key/同 payload 幂等重放仍返回原结果。服务端锁定记录后以 `totalReceived - currentTotal` 计算 delta；total 可为 0，但不得超过 `999999.99`。相同 total 是 no-op，不创建 event/Activity，也不增加任何 version。非零 delta 原子调整 Inventory；变更后的 Inventory `quantityOnHand` 不得小于 0 或超出 Inventory 支持范围。 新契约以orderedQuantity计算履约；新操作在相关记录需求/订货量不一致或有手填金额时要求确认能力header，不支持则409 PURCHASE_CONFIRMATION_CLIENT_REQUIRED；历史成功幂等重放保持，详见purchase-order-confirmation.md。
       parameters: [*id009, *id006]
       requestBody:
         required: true
@@ -1512,6 +1587,94 @@ paths:
         '409': {description: List state、item version、negative inventory 或幂等请求冲突, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '422': {description: total、变更后的 Inventory quantity、date 或 request field 未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
         '503': {description: Inventory Activity dependency 暂不可用且事务未写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+  /purchase-list-items/{itemId}/cancellation:
+    parameters: [{$ref: '#/components/parameters/PurchaseConfirmationVersion'}, {$ref: '#/components/parameters/PurchaseCancellationVersion'}]
+    post:
+      tags: [Purchase Lists]
+      operationId: cancelPurchaseListItem
+      summary: 取消 Approved 商品或 Ordered item 的剩余收货
+      description: >-
+        所有 active Member 可执行，Organization 从认证上下文确定。支持 Approved 和 Ordered，详见 purchase-item-cancellation.md。
+        Approved 要求 X-Purchase-Cancellation-Version=1，直接移除 item，不留取消行/原因记录，返回 purchaseListItem=null，List version增加且updatedAt更新；可选恢复全部已保存orderedQuantity。
+        Ordered 仅未取消且receivedQuantity<orderedQuantity可操作，保留item/原因/收货历史，仅增加item version，可选恢复orderedQuantity-receivedQuantity；不自动Complete或调整Inventory。
+        单项draftReturnConfirmation也要求X-Purchase-Cancellation-Version=1；两分支reason均必填trim后1–500字符；Approved只校验及用于幂等fingerprint，不创建商品取消审计记录；Ordered持久化原因且不可编辑。
+        returnToDraft默认false。为true时新建Draft复制提交人，vendor/vendorItemNumber/unitPrice/notes/priority均null；已有Draft合并数量并保留metadata。
+        姓名冲突先409 PURCHASE_DRAFT_SUBMITTER_CONFLICT且无写入，用户明确继续可提供draftReturnConfirmation绑定draftItemId/expectedVersion，覆盖整个合并行的提交人为原item快照。
+        确认目标改变或已删除时409 PURCHASE_DRAFT_VERSION_CONFLICT，不降级为新建；超过999999.99时PURCHASE_DRAFT_CONFLICT，全事务回滚。详见purchase-actor-names.md。
+        先授权并按组织/operation/key重放成功结果，再查item与状态/版本/能力；Approved删行后甚至空List删除后仍重放原结果，不重复退回。改变规范化payload复用key返回IDEMPOTENCY_CONFLICT。
+        锁顺序为List、item、同商品Draft，确认含Draft版本校验；与Save/下单/删除/整单取消串行。旧Ordered无新字段保持原响应，缺确认仍安全拒绝姓名冲突。
+        订货量或金额变化仍要求X-Purchase-Confirmation-Version=1；取消扩展header不替代订货确认header，两个能力均不是权限凭据。
+      parameters: [*id009, *id006]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseListItemCancellationRequest'}
+            example: {expectedListVersion: 2, expectedItemVersion: 3, reason: Vendor cannot supply the remaining quantity., returnToDraft: false}
+      responses:
+        '200': {description: 更新后的 List、Ordered保留item或Approved的null、可选Draft结果, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListItemCancellationResult'}}}}
+        '401': {description: Access Token 缺失、无效或过期, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership 或 Organization 不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前 Organization 下 item 不存在；跨租户 ID 同样返回 404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409':
+          description: List/item state/version、Draft 提交人/合并上限或幂等冲突
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+              examples:
+                submitterConflict:
+                  summary: 提交人不同，取消和退回均未提交
+                  value:
+                    error:
+                      code: PURCHASE_DRAFT_SUBMITTER_CONFLICT
+                      message: 'This product is already in Draft with a different submitter (Draft: Alice; returning item: Bob). Continue to merge quantities and replace the Draft submitter with the returning submitter.'
+                      requestId: 01K-PURCHASE-EXAMPLE
+                      details:
+                        purchaseListId: 55555555-5555-4555-8555-555555555555
+                        purchaseListItemId: 77777777-7777-4777-8777-777777777777
+                        inventoryItemId: 11111111-1111-4111-8111-111111111111
+                        draftItemId: 44444444-4444-4444-8444-444444444444
+                        draftSubmittedByName: Alice
+                        returningSubmittedByName: Bob
+                        draftVersion: 4
+                        currentPlannedQuantity: '2.00'
+                        returningQuantity: '3.00'
+                        mergedPlannedQuantity: '5.00'
+        '422': {description: reason 缺失、null、trim 后为空或超过 500 字符，或其他请求字段未通过校验, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '503': {description: 依赖不可用且没有部分写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+  /purchase-list-items/{itemId}/confirmation:
+    patch:
+      tags: [Purchase Lists]
+      operationId: updateApprovedPurchaseItemConfirmation
+      summary: 保存 Approved item 的订货量及单项确认金额
+      description: >-
+        所有 active Member 可执行，仅 Approved 可编辑。明确 Save 原子更新 orderedQuantity、actualTotalOverride 与 actualTotalReason，不覆盖 plannedQuantity 原需求或 unitPrice。
+        数量单独修改保留金额和原因；新手填金额的原因可选，省略/null/纯空白保存为null，不沿用旧原因；override=null恢复估算并清空当前原因。
+        同时锁定并校验 List/Item versions；材料变化增加两者version与List updatedAt，当前版本no-op不增加version。幂等重试回放原结果，过期版本即使数值相同仍409。
+        本路由要求 X-Purchase-Confirmation-Version 为1（缺失或不支持为409业务错误）。不写Inventory/Activity/receipt；字段、审计与旧客户端保护见purchase-order-confirmation.md。
+      parameters: [*id009, *id006, {$ref: '#/components/parameters/PurchaseConfirmationVersion'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseItemConfirmationUpdateRequest'}
+            examples:
+              manualTotal:
+                value: {expectedListVersion: 2, expectedItemVersion: 1, orderedQuantity: '6.00', actualTotalOverride: '50.00', actualTotalReason: Buy five get one free}
+              manualTotalWithoutReason:
+                value: {expectedListVersion: 2, expectedItemVersion: 1, actualTotalOverride: '0.00'}
+              clearReason:
+                value: {expectedListVersion: 3, expectedItemVersion: 2, actualTotalReason: null}
+              restoreEstimate:
+                value: {expectedListVersion: 3, expectedItemVersion: 2, actualTotalOverride: null}
+      responses:
+        '200': {description: 完整当前PurchaseListDetail，包含更新后的List与Item versions, content: {application/json: {schema: {$ref: '#/components/schemas/PurchaseListDetail'}}}}
+        '401': {description: Access Token缺失或失效, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '403': {description: Membership或Organization不允许操作, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '404': {description: 当前组织无此item，跨租户同样404, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '409': {description: state/version/idempotency冲突或PURCHASE_CONFIRMATION_CLIENT_REQUIRED；不部分写入, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '422': {description: REQUEST_VALIDATION_ERROR；空编辑或数量/金额/原因/成对字段不合法, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
+        '503': {description: 依赖暂不可用，操作未部分提交, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}}
   /dashboard/inventory-summary:
     get:
       tags:
@@ -2075,7 +2238,7 @@ paths:
       tags: [Analytics]
       operationId: getAnalyticsPurchaseSpend
       summary: 获取采购实际金额和未来建议预算趋势及所选月分类
-      description: 历史 Ordered/Completed 的 plannedQuantity × unitPrice 按诊所当地 orderedAt 月份归属，与 Dashboard Purchase Spend 同口径。未来两个完整自然月按虚拟建议 Order By 月份归属，明确标为 forecast；不写库存或采购清单。历史和未来的品类拆分都按商品当前品类；改品类会重分组历史分类但不改总金额。所选月份分类总额与对应趋势点一致。详见 analytics-contract.md。
+      description: 历史 Ordered/Completed 按非null的actualTotalOverride优先，否则orderedQuantity × unitPrice，按诊所当地orderedAt月份归属（0是已知人工金额；仅两种金额来源均未知时排除），与 Dashboard Purchase Spend 同口径。未来两个完整自然月按虚拟建议 Order By 月份归属，明确标为 forecast；不写库存或采购清单。历史和未来的品类拆分都按商品当前品类；改品类会重分组历史分类但不改总金额。所选月份分类总额与对应趋势点一致。详见 analytics-contract.md。
       parameters:
       - name: period
         in: query
@@ -2801,6 +2964,19 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Supabase Access Token
+  parameters:
+    PurchaseCancellationVersion:
+      name: X-Purchase-Cancellation-Version
+      in: header
+      required: false
+      description: 扩展客户端发送1；Approved单项Cancel、单项draftReturnConfirmation及空清单DELETE必须提供。缺失或不支持时409 PURCHASE_CANCELLATION_CLIENT_REQUIRED，无写入；Ordered旧请求可不传，成功历史幂等重放优先。不替代订货确认能力或身份权限。CORS允许此header。
+      schema: {type: string, example: '1'}
+    PurchaseConfirmationVersion:
+      name: X-Purchase-Confirmation-Version
+      in: header
+      required: false
+      description: 新客户端发送字符串1。confirmation路由及订货量不同于需求量或存在手填金额的记录，其新mutation必须提供；缺失或不支持值返回PURCHASE_CONFIRMATION_CLIENT_REQUIRED 409。授权的成功历史幂等重放先于此检查，详见purchase-order-confirmation.md。
+      schema: {type: string, example: '1'}
   schemas:
     EntityReference:
       type: object
@@ -3925,9 +4101,38 @@ components:
         membershipId: *id001
         displayName: {type: string}
         role: {type: string, enum: [admin, manager, member]}
+    PurchaseSubmittedByName:
+      type: [string, 'null']
+      maxLength: 100
+      pattern: '^[^\r\n]*$(?![\s\S])'
+      description: 业务提交人读值；历史记录/快照和历史退回来源可为 null，响应始终返回此字段，普通 UI 空值留空。新增和显式编辑请求使用非空 PurchaseSubmittedByNameInput，不回填或伪造历史姓名。仅英文 A-Z 转小写用于冲突比较，不改变展示大小写；不做姓名身份验证或 NFKC/别名推断。
+    PurchaseSubmittedByNameInput:
+      type: string
+      minLength: 1
+      maxLength: 100
+      pattern: '^(?=.*\S)[^\r\n]+$(?![\s\S])'
+      description: 必填的直接新增提交人，或PATCH实际提供的提交人；不能为null/空字符串/纯空白，拒绝CR/LF，原始输入最多100字符，trim并折叠连续空白，保留大小写，不做NFKC或身份推断。PATCH可省略以保持现值。
+    PurchaseSelectedApprover:
+      description: 必填的登记业务审批人，不代表经认证的审批动作。成员方式保留当前 actor 形状，但 displayName 是审批时快照；手填方式 membershipId/role 显式为 null，不创建成员。通用 PurchaseActor 不变。
+      oneOf:
+      - type: object
+        required: [membershipId, displayName, role]
+        properties:
+          membershipId: *id001
+          displayName: {type: string, minLength: 1, description: 有效成员的完整姓名快照，不按手填的 100 字符上限截断}
+          role: {type: string, enum: [admin, manager, member], description: 成员元信息；选择时仍须为 active Admin/Manager，不作为业务姓名或权限依据}
+      - type: object
+        required: [membershipId, displayName, role]
+        properties:
+          membershipId: {type: 'null'}
+          displayName: {type: string, minLength: 1, maxLength: 100, pattern: '^(?=.*\S)[^\r\n]+$(?![\s\S])'}
+          role: {type: 'null'}
+      examples:
+      - {membershipId: 33333333-3333-4333-8333-333333333333, displayName: Alex Chen, role: manager}
+      - {membershipId: null, displayName: Alice, role: null}
     PurchaseDraftItem:
       type: object
-      required: [id, inventoryItemId, productName, brandName, specification, unitName, quantityOnHand, plannedQuantity, priority, vendor, vendorItemNumber, unitPrice, notes, incomingSummary, version, createdAt, updatedAt]
+      required: [id, inventoryItemId, productName, brandName, specification, unitName, quantityOnHand, plannedQuantity, submittedByName, priority, vendor, vendorItemNumber, unitPrice, notes, incomingSummary, version, createdAt, updatedAt]
       properties:
         id: *id001
         inventoryItemId: *id001
@@ -3942,6 +4147,7 @@ components:
           allOf: [*id014]
           description: 读取 Draft 时对应 Inventory Item 的当前库存数量；不扣 Draft plannedQuantity 或未收货的 incoming stock，不是 Draft 快照。
         plannedQuantity: *id015
+        submittedByName: {$ref: '#/components/schemas/PurchaseSubmittedByName'}
         priority:
           type: [string, 'null']
           enum: [low, medium, high, null]
@@ -3951,8 +4157,8 @@ components:
         unitPrice: {anyOf: [*id014, {type: 'null'}]}
         notes: {type: [string, 'null'], maxLength: 2000}
         incomingSummary:
+          description: 现有在途清单的订购/实收历史仍保留；remainingQuantity 改为各项 pendingQuantity 总和，取消部分不再算待到货。listCount 仍为引用该商品的 Approved/Ordered 清单数。
           type: object
-          description: 该 Inventory Item 在 approved/ordered lists 中的 snapshot 汇总；不含 Draft 当前行。
           required: [listCount, plannedQuantity, receivedQuantity, remainingQuantity]
           properties:
             listCount: {type: integer, minimum: 0}
@@ -3974,6 +4180,7 @@ components:
         unitName: Box
         quantityOnHand: '8.00'
         plannedQuantity: '5.00'
+        submittedByName: Alice
         priority: high
         vendor: K-Dental
         vendorItemNumber: KD-49135
@@ -3992,10 +4199,11 @@ components:
     PurchaseDraftItemInput:
       type: object
       additionalProperties: false
-      required: [inventoryItemId, plannedQuantity]
+      required: [inventoryItemId, plannedQuantity, submittedByName]
       properties:
         inventoryItemId: *id001
         plannedQuantity: {$ref: '#/components/schemas/PurchaseQuantityInput'}
+        submittedByName: {$ref: '#/components/schemas/PurchaseSubmittedByNameInput'}
         priority:
           type: [string, 'null']
           enum: [low, medium, high, null]
@@ -4034,6 +4242,7 @@ components:
       properties:
         expectedVersion: {type: integer, minimum: 1}
         plannedQuantity: {$ref: '#/components/schemas/PurchaseQuantityInput'}
+        submittedByName: {$ref: '#/components/schemas/PurchaseSubmittedByNameInput'}
         priority:
           type: [string, 'null']
           enum: [low, medium, high, null]
@@ -4052,9 +4261,36 @@ components:
       pattern: ^(?:0|[1-9]\d{0,5})(?:\.\d{1,2})?$
       examples: ['0', '12.50', '999999.99']
       description: 大于等于零且不超过 999999.99 的累计实收数量；最多两位小数。
+    PurchaseManualTotalInput:
+      type: string
+      pattern: '^(0|[1-9]\d{0,11})(\.\d{1,2})?$'
+      examples: ['0', '50.00', '999999999999.99']
+      description: 非负人工总价，最多12位整数及2位小数；沿用PurchaseDecimal金额上限，不能使用浮点数。null由容器schema显式允许。
+    PurchaseDisplayTotal:
+      type: string
+      pattern: '^(0|[1-9]\d*)\.\d{2}$'
+      description: 两位小数显示金额；估算乘积可超过单个手填输入上限，使用Decimal，不截断或浮点累计。
+    PurchaseItemConfirmationUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedListVersion, expectedItemVersion]
+      anyOf:
+      - required: [orderedQuantity]
+      - required: [actualTotalOverride]
+      - required: [actualTotalReason]
+      properties:
+        expectedListVersion: {type: integer, minimum: 1, maximum: 9223372036854775807}
+        expectedItemVersion: {type: integer, minimum: 1, maximum: 9223372036854775807}
+        orderedQuantity: {$ref: '#/components/schemas/PurchaseQuantityInput'}
+        actualTotalOverride:
+          anyOf: [{$ref: '#/components/schemas/PurchaseManualTotalInput'}, {type: 'null'}]
+        actualTotalReason:
+          type: [string, 'null']
+          description: 可选原因；trim后非空时限制1–500个Unicode字符，空白或null归一化为null。显式保存非null手填金额但省略原因也保存null，不沿用旧原因。reason-only清空要求已有人工覆盖；详见purchase-order-confirmation.md。
+      description: Save的一次原子请求；未提供override时保留金额，只改数量保留原因；提供override时同时替换可选原因。显式null覆盖恢复估算且清空原因；reason-only（含清空）仅当已有人工覆盖时有效。非空原因不能脱离人工覆盖存在。状态相关校验由服务端返回422，不用额外持久化编辑标记。
     PurchaseListItem:
       type: object
-      required: [id, inventoryItemId, productName, brandName, specification, unitName, plannedQuantity, receivedQuantity, remainingQuantity, varianceQuantity, receiptStatus, vendor, vendorItemNumber, unitPrice, notes, version]
+      required: [id, inventoryItemId, productName, brandName, specification, unitName, containedQuantity, containedUnitName, plannedQuantity, receivedQuantity, remainingQuantity, varianceQuantity, receiptStatus, vendor, vendorItemNumber, unitPrice, notes, submittedByName, version]
       properties:
         id: *id001
         inventoryItemId: *id001
@@ -4065,19 +4301,62 @@ components:
         barcode: *id013
         specification: *id013
         unitName: {type: string}
-        plannedQuantity: *id015
+        containedQuantity:
+          type: [string, 'null']
+          pattern: ^[1-9]\d*(\.\d{1,4})?$|^0\.\d{1,4}$
+          description: 审批时保存的每个 Purchase Unit 的内容数量；历史行可能为 null。
+        containedUnitName:
+          type: [string, 'null']
+          description: 内容量单位；与 containedQuantity 同时为值或同时为 null。
+        plannedQuantity:
+          <<: *id015
+          description: 不可变Requested Qty；新增订货量不能重解释此字段。
+        orderedQuantity:
+          allOf: [*id015]
+          description: 实际订货量，默认等于plannedQuantity；新实时响应始终包含，旧缓存或幂等快照可缺省并回退plannedQuantity。
+        estimatedTotal:
+          anyOf: [{$ref: '#/components/schemas/PurchaseDisplayTotal'}, {type: 'null'}]
+          description: orderedQuantity × unitPrice显示估算，half-up至两位，缺unitPrice为null。
+        actualTotalOverride:
+          anyOf: [{$ref: '#/components/schemas/PurchaseManualTotalInput'}, {type: 'null'}]
+          description: 持久化人工覆盖；null回退估算，0是有效金额，不靠金额相等判定来源。
+        actualTotalReason:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 500
+          description: 手填覆盖的可选trim后原因；人工覆盖存在时也可为null，无人工覆盖时必须为null。恢复估算或显式清空原因保留审计。
+        actualTotal:
+          anyOf: [{$ref: '#/components/schemas/PurchaseDisplayTotal'}, {type: 'null'}]
+          description: 人工覆盖非null时优先，否则estimatedTotal；均缺为null，非付款金额。新实时响应始终包含全部新增金额字段，旧快照可缺省。
         receivedQuantity: *id014
         remainingQuantity:
           <<: *id016
-          description: '`plannedQuantity - receivedQuantity`；over-received 时为负数。'
+          description: '`orderedQuantity - receivedQuantity`；over-received 时为负数。'
         varianceQuantity:
           <<: *id016
-          description: '`receivedQuantity - plannedQuantity`；shortfall 时为负数。'
+          description: '`receivedQuantity - orderedQuantity`；shortfall 时为负数。'
         receiptStatus: {type: string, enum: [not_received, partially_received, received, over_received]}
+        isCancelled: {type: boolean, description: cancelledAt 非空时为 true；UI 优先显示 Cancelled，receiptStatus 仍表达实际收货程度}
+        cancelledQuantity:
+          <<: *id014
+          description: 未取消为 0；已取消为 orderedQuantity - receivedQuantity，由冻结数量推导，不新增数量字段。
+        cancellationReason:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 500
+          description: 已取消 item 的规范化原因；未取消或新增字段前的历史取消记录为 null。旧响应或历史幂等 payload 可缺省，新实现的实时 item 响应始终返回；取消后不可编辑。与 List 层同名字段独立。
+        cancelledAt: {type: [string, 'null'], format: date-time}
+        cancelledBy: {anyOf: [{$ref: '#/components/schemas/PurchaseActor'}, {type: 'null'}]}
+        pendingQuantity:
+          <<: *id014
+          description: 已取消为 0；否则 max(orderedQuantity - receivedQuantity, 0)。
         vendor: {type: [string, 'null']}
         vendorItemNumber: {type: [string, 'null']}
         unitPrice: {anyOf: [*id014, {type: 'null'}]}
         notes: {type: [string, 'null']}
+        submittedByName:
+          allOf: [{$ref: '#/components/schemas/PurchaseSubmittedByName'}]
+          description: 审批时复制的提交人快照，nullable，之后不可修改；不是当前 Draft 或账号姓名。
         version: {type: integer, minimum: 1}
     PurchaseListSummary:
       type: object
@@ -4087,8 +4366,14 @@ components:
         name: {type: string, minLength: 1, maxLength: 200}
         notes: {type: [string, 'null'], maxLength: 2000}
         status: {type: string, enum: [approved, ordered, completed, cancelled]}
-        itemCount: {type: integer, minimum: 1}
+        canComplete: {type: boolean, description: 仅 Ordered 且全部 items 已收齐/超收或已取消时为 true；其他状态为 false}
+        itemCount: {type: integer, minimum: 0, description: 当前商品行数；Approved单项Cancel移除行后减少，空Approved为0。Ordered/Completed保留取消行并计入总数，必须非空。}
+        cancelledItemCount:
+          type: [integer, 'null']
+          minimum: 0
+          description: 单项 Cancelled 的 item 行数，不是取消数量，不由整单 status 推导。实时 summary/detail（含列表、Dashboard 与 mutation 内嵌 List）始终返回 0 至 itemCount 的整数；旧响应/历史幂等快照可缺省或 null，表示未知，不能默认视为 0。收货进度分母为 itemCount - cancelledItemCount，分子为 receiptCounts.received + receiptCounts.overReceived；分母为 0 时隐藏百分比/进度条并显示 No items to receive，取消项数单独显示。完整详情可从全部 items 的 isCancelled 精确推导，不能用 previewItems 或分页推断。
         receiptCounts:
+          description: 保留按实际数量的原四类互斥计数，取消项仍按实际收货程度计入，不代表仍在等待。
           type: object
           required: [notReceived, partiallyReceived, received, overReceived]
           properties:
@@ -4098,7 +4383,7 @@ components:
             overReceived: {type: integer, minimum: 0}
         version: {type: integer, minimum: 1}
         approvedBy: {$ref: '#/components/schemas/PurchaseActor'}
-        selectedApprover: {$ref: '#/components/schemas/PurchaseActor'}
+        selectedApprover: {$ref: '#/components/schemas/PurchaseSelectedApprover'}
         approvedAt: {type: string, format: date-time}
         orderedBy: {anyOf: [{$ref: '#/components/schemas/PurchaseActor'}, {type: 'null'}]}
         orderedAt: {type: [string, 'null'], format: date-time}
@@ -4126,7 +4411,12 @@ components:
         unitName:
           type: string
           description: 购买单位，例如 box；即使内容量未知也返回。
-        plannedQuantity: *id015
+        plannedQuantity:
+          <<: *id015
+          description: 原需求Requested Qty，审批后不可变。
+        orderedQuantity:
+          allOf: [*id015]
+          description: 实际订货量，新实时预览始终返回，旧响应缺省时回退plannedQuantity。
     PurchaseListPageItem:
       description: 仅 `GET /purchase-lists` 的分页条目；继承原有 Summary 字段并增加全部商品预览。Dashboard 等 Summary 使用方没有 `previewItems` 契约。
       allOf:
@@ -4136,7 +4426,7 @@ components:
         properties:
           previewItems:
             type: array
-            minItems: 1
+            minItems: 0
             items: {$ref: '#/components/schemas/PurchaseListPreviewItem'}
             description: 清单内全部商品行，包含超过卡片可见行数的商品；不截断。顺序沿用 Purchase List item 顺序。
     PurchaseListDetail:
@@ -4145,13 +4435,14 @@ components:
       - type: object
         required: [items]
         properties:
-          items: {type: array, minItems: 1, items: {$ref: '#/components/schemas/PurchaseListItem'}}
+          items: {type: array, minItems: 0, items: {$ref: '#/components/schemas/PurchaseListItem'}, description: Approved可为空；Ordered/Completed与整单Cancelled快照仍非空。}
       example:
         id: 55555555-5555-4555-8555-555555555555
         name: September restorative order
         notes: Approved for weekly purchasing
         status: ordered
         itemCount: 1
+        cancelledItemCount: 0
         receiptCounts: {notReceived: 0, partiallyReceived: 1, received: 0, overReceived: 0}
         version: 2
         approvedBy: {membershipId: 33333333-3333-4333-8333-333333333333, displayName: Alex Chen, role: manager}
@@ -4176,7 +4467,14 @@ components:
           barcode: null
           specification: 100 / box
           unitName: Box
+          containedQuantity: null
+          containedUnitName: null
           plannedQuantity: '5.00'
+          orderedQuantity: '5.00'
+          estimatedTotal: '225.00'
+          actualTotalOverride: null
+          actualTotalReason: null
+          actualTotal: '225.00'
           receivedQuantity: '2.00'
           remainingQuantity: '3.00'
           varianceQuantity: '-3.00'
@@ -4185,6 +4483,7 @@ components:
           vendorItemNumber: KD-49135
           unitPrice: '45.00'
           notes: Order before Friday
+          submittedByName: Alice
           version: 2
     PurchaseListPage:
       type: object
@@ -4206,6 +4505,7 @@ components:
           notes: Approved for weekly purchasing
           status: approved
           itemCount: 2
+          cancelledItemCount: 0
           receiptCounts: {notReceived: 2, partiallyReceived: 0, received: 0, overReceived: 0}
           version: 1
           approvedBy: {membershipId: 33333333-3333-4333-8333-333333333333, displayName: Alex Chen, role: manager}
@@ -4221,18 +4521,28 @@ components:
           createdAt: '2026-09-08T11:00:00-04:00'
           updatedAt: '2026-09-08T11:00:00-04:00'
           previewItems:
-          - {id: 77777777-7777-4777-8777-777777777777, productName: Nitrile Exam Gloves, containedQuantity: '100.0000', containedUnitName: pcs, unitName: box, plannedQuantity: '5.00'}
-          - {id: 88888888-8888-4888-8888-888888888888, productName: Dental Bibs, containedQuantity: null, containedUnitName: null, unitName: box, plannedQuantity: '2.00'}
+          - {id: 77777777-7777-4777-8777-777777777777, productName: Nitrile Exam Gloves, containedQuantity: '100.0000', containedUnitName: pcs, unitName: box, plannedQuantity: '5.00', orderedQuantity: '5.00'}
+          - {id: 88888888-8888-4888-8888-888888888888, productName: Dental Bibs, containedQuantity: null, containedUnitName: null, unitName: box, plannedQuantity: '2.00', orderedQuantity: '2.00'}
         pagination: {page: 1, pageSize: 20, totalItems: 1, totalPages: 1, hasNextPage: false, hasPreviousPage: false}
         counts: {approved: 1, ordered: 0, completed: 0}
     PurchaseListApprovalRequest:
       type: object
       additionalProperties: false
-      required: [name, selectedApproverMembershipId, draftItems]
+      required: [name, draftItems]
+      description: 两种审批人输入恰好一种；未选、空白、null 或同时传两个字段均为 REQUEST_VALIDATION_ERROR 422，事务无写入。姓名属于幂等 material payload。
+      oneOf:
+      - required: [selectedApproverMembershipId]
+      - required: [selectedApproverName]
       properties:
         name: {type: string, minLength: 1, maxLength: 200}
         notes: {type: [string, 'null'], maxLength: 2000}
         selectedApproverMembershipId: *id001
+        selectedApproverName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^(?=.*\S)[^\r\n]+$(?![\s\S])'
+          description: 手填业务审批人；拒绝 CR/LF，trim 并折叠连续空白后必须非空，最多 100 字符，保留大小写。
         draftItems:
           type: array
           minItems: 1
@@ -4279,15 +4589,77 @@ components:
             properties:
               disposition: {type: string, enum: [created, merged]}
               draftItem: {$ref: '#/components/schemas/PurchaseDraftItem'}
+    PurchaseListItemCancellationRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedListVersion, expectedItemVersion, reason]
+      properties:
+        expectedListVersion: {type: integer, minimum: 1, maximum: 9223372036854775807}
+        expectedItemVersion: {type: integer, minimum: 1, maximum: 9223372036854775807}
+        reason:
+          type: string
+          minLength: 1
+          pattern: '\S'
+          description: 必填取消原因；去除首尾空白后按 Unicode 字符数校验 1–500 字符；Ordered保存规范化值，Approved仅校验并用于幂等fingerprint、不保留商品取消记录。不可为 null、空串或纯空白；不允许取消后编辑，不复制到 Draft。长度限制作用于 trim 后值。
+        returnToDraft: {type: boolean, default: false}
+        draftReturnConfirmation:
+          $ref: '#/components/schemas/PurchaseDraftReturnConfirmation'
+      allOf:
+      - if: {required: [draftReturnConfirmation], properties: {draftReturnConfirmation: {}}}
+        then:
+          required: [returnToDraft]
+          properties: {returnToDraft: {const: true}}
+      description: draftReturnConfirmation仅returnToDraft=true时可提供；否则422。提供表示明确确认覆盖，必须校验同商品Draft的ID与version；缺省不覆盖冲突姓名。两个分支reason均必填，Approved不持久化为商品取消记录。
+    PurchaseDraftReturnConfirmation:
+      type: object
+      additionalProperties: false
+      required: [draftItemId, expectedVersion]
+      properties:
+        draftItemId: {type: string, format: uuid}
+        expectedVersion: {type: integer, minimum: 1, maximum: 9223372036854775807}
+      description: 用户看过本次冲突后明确继续；绑定同组织同商品的Draft行和版本，与外层List/item版本一起防止确认后丢更新。不可为null。
+    PurchaseListDeletionResult:
+      type: object
+      additionalProperties: false
+      required: [purchaseListId, deleted]
+      properties:
+        purchaseListId: {type: string, format: uuid}
+        deleted: {type: boolean, const: true}
+    PurchaseListItemCancellationResult:
+      type: object
+      required: [purchaseList, purchaseListItem, restoredDraftItem]
+      properties:
+        purchaseList: {$ref: '#/components/schemas/PurchaseListDetail'}
+        purchaseListItem:
+          anyOf: [{$ref: '#/components/schemas/PurchaseListItem'}, {type: 'null'}]
+          description: Ordered保留完整item；Approved为null，已移除且不保留取消行。
+        restoredDraftItem:
+          anyOf:
+          - type: object
+            required: [disposition, draftItem]
+            properties:
+              disposition: {type: string, enum: [created, merged]}
+              draftItem: {$ref: '#/components/schemas/PurchaseDraftItem'}
+          - type: 'null'
+    PurchaseListCompletionResult:
+      allOf:
+      - $ref: '#/components/schemas/PurchaseListDetail'
+      - type: object
+        required: [alreadyCompleted, message]
+        properties:
+          alreadyCompleted: {type: boolean}
+          message: {type: [string, 'null']}
     PurchaseListCompletionRequest:
       type: object
       additionalProperties: false
-      required: [expectedListVersion, confirmVariance]
+      required: [expectedListVersion]
       properties:
-        expectedListVersion: {type: integer, minimum: 1}
-        confirmVariance:
-          type: boolean
-          description: 有任何 zero/short/over variance 时必须为 true；exact-only List 可为 false。
+        expectedListVersion: {type: integer, minimum: 1, maximum: 9223372036854775807}
+        expectedItemVersions:
+          type: [object, 'null']
+          propertyNames: {type: string, format: uuid}
+          additionalProperties: {type: integer, minimum: 1, maximum: 9223372036854775807}
+          description: 新客户端提交所见全部 item ID/version；不一致返回 PURCHASE_LIST_RECEIPT_SNAPSHOT_CONFLICT。兼容旧 API 客户端时可省略。
     PurchaseReceiptRequest:
       type: object
       additionalProperties: false
@@ -4332,7 +4704,12 @@ components:
       required: [code, plannedQuantity, totalReceived, overReceivedBy]
       properties:
         code: {type: string, const: PURCHASE_ITEM_OVER_RECEIVED}
-        plannedQuantity: *id015
+        plannedQuantity:
+          <<: *id015
+          description: 保留原需求字段；超收基准为orderedQuantity。
+        orderedQuantity:
+          allOf: [*id015]
+          description: 新实时warning始终返回；overReceivedBy=totalReceived-orderedQuantity。
         totalReceived: *id014
         overReceivedBy: *id015
     PurchaseReceiptResult:
@@ -4356,7 +4733,8 @@ components:
         warning: {anyOf: [{$ref: '#/components/schemas/PurchaseReceiptWarning'}, {type: 'null'}]}
     PurchaseListVarianceSummary:
       type: object
-      description: '`PURCHASE_LIST_VARIANCE_CONFIRMATION_REQUIRED` 的 `error.details.variance` shape。'
+      deprecated: true
+      description: 历史 variance confirmation shape，仅供旧记录参考；新 Complete 不返回此错误。
       required: [zeroReceivedItemCount, shortItemCount, overItemCount, items]
       properties:
         zeroReceivedItemCount: {type: integer, minimum: 0}
@@ -4761,12 +5139,11 @@ components:
                   description: 非负 Decimal 金额，固定两位小数字符串；不得使用浮点数累计。
             description: 按月份升序，恰好 N=6/12/24 条，month 唯一且连续；无下单或下单商品全部缺价的月份金额为 0.00。
             minItems: 6
-        description: Purchase Spend / Estimated value of orders placed。统计当前组织 Ordered 和 Completed 清单的 plannedQuantity × unitPrice 快照，
+        description: Purchase Spend / Estimated value of orders placed。统计当前组织 Ordered 和 Completed 清单的人工actualTotalOverride（非null时）或orderedQuantity × unitPrice快照，
           按 orderedAt 在 Organization 时区归月，范围从 fromDate 当地零点到 asOf（含截止点）。Draft、Approved、Cancelled 不计入。
-          下单后不允许取消或修改下单数量和单价；分批或跨月收货、收货纠正、Completed（包括强制完成）不改变原下单金额，也不重复计算。
-          商品移出当前库存或当前 Inventory 价格变化不影响历史下单快照。unitPrice=null 的商品排除，unitPrice=0 是有效零价。
-          先以 Decimal 精确乘积累计每月金额，再按 ROUND_HALF_UP 四舍五入至两位小数。固定轻提示由 Web 展示：Estimated from ordered quantities
-          and purchase prices. Items without a price are excluded. This does not represent payments. 不读取收货事件，不要求原收货关联或历史纠正回填。详见 dashboard-contract.md。
+          下单后禁止修改订货量/价格/人工金额；单项取消不自动退款或减少金额，整单Cancelled仍按状态排除；分批或跨月收货、收货纠正、Completed（包括强制完成）不改变原下单金额，也不重复计算。
+          商品移出当前库存或当前 Inventory 价格变化不影响历史下单快照。人工覆盖0是已知金额；仅人工覆盖及unitPrice均null的商品排除。
+          先以 Decimal 精确乘积累计每月金额，再按 ROUND_HALF_UP 四舍五入至两位小数。固定轻提示由 Web 展示：Based on confirmed item totals where provided, otherwise ordered quantities and purchase prices. Items without an amount are excluded. This does not represent payments. 不读取收货事件，不要求原收货关联或历史纠正回填。详见 dashboard-contract.md。
       - oneOf:
         - type: object
           required: [period, points]
@@ -4934,7 +5311,7 @@ components:
         category: {$ref: '#/components/schemas/CategoryReference'}
         inventoryUnitName: {type: string}
         currentStock: {type: string, pattern: '^(0|[1-9]\d*)(\.\d{1,2})?$'}
-        incomingStock: {type: string, pattern: '^(0|[1-9]\d*)(\.\d{1,2})?$', description: '所有 Ordered 项 max(plannedQuantity-receivedQuantity, 0) 之和；部分收货量已在 currentStock 中，不重复计算。'}
+        incomingStock: {type: string, pattern: '^(0|[1-9]\d*)(\.\d{1,2})?$', description: '所有 Ordered 项 max(orderedQuantity-receivedQuantity, 0) 之和；部分收货量已在 currentStock 中，不重复计算。'}
         planningAvailable: {type: string, pattern: '^(0|[1-9]\d*)(\.\d{1,2})?$', description: currentStock + incomingStock，仅读取时规划，不写库存。}
         minimumQuantity: {type: string, pattern: '^(0|[1-9]\d*)(\.\d{1,2})?$'}
         dailyUse: {type: string, pattern: '^(0|[1-9]\d*)(\.\d+)?$', description: 至少 28 个诊所当地自然日可观察历史、至少 2 个不同周正消耗后，按营业日估算；这是可计算门槛，不保证预测准确度。}
