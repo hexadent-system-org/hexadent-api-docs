@@ -133,7 +133,10 @@ Ordered/Completed items contribute non-null `actualTotalOverride`, otherwise
 precise `orderedQuantity * unitPrice`, in the local `orderedAt` month.
 Draft/Approved/whole-list Cancelled are excluded. Only items lacking both a manual
 amount and unit price are unpriced; a zero override is known even without price.
-Partial receipts or item cancellation do not subtract a presumed refund.
+Partial receipts or post-order item cancellation do not subtract a presumed refund.
+Items cancelled before the parent ordered_at (or while ordered_at is null) are
+excluded from historical spend and latest reference prices, including when that
+parent later becomes Ordered/Completed. Their original amount snapshots remain.
 Receipt, correction and completion never move an amount
 to another month. The current month contains actual orders only. Its point
 is marked `actual`, never joined to a future forecast as if it had occurred.

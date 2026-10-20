@@ -186,8 +186,7 @@ See [confirmation](purchase-order-confirmation.md) for conditional legacy-client
 
 ## Approved Cancel 与空清单取消
 
-`PURCHASE_LIST_EMPTY` 阻止空Approved下单；空单可复用整单Cancel转Cancelled，保留清单及历史，不新增DELETE接口。Approved单项Cancel返回purchaseListItem=null，当前item已移除；
-刷新列表/详情/Draft缓存，不能解引用null或保留虚构Cancelled商品行。重放成功的历史
+`PURCHASE_LIST_EMPTY` 阻止无有效项Approved下单；空单可复用整单Cancel转Cancelled，保留清单及历史，不新增DELETE接口。Approved单项Cancel返回独立的完整Cancelled item和原因；当前清单读取投影隐藏下单前取消项，刷新列表/详情/Draft缓存。商品从新详情消失时，未保存编辑仍须提供显式丢弃入口；未知Save结果先重试原请求/key确认，不自动丢弃。旧历史成功响应仍可能为null，不得解引用或用重放覆盖当前状态。重放成功的历史
 结果可能包含随后已取消的清单，不能用重放快照复活Approved状态；应刷新当前详情。
 `PURCHASE_CANCELLATION_CLIENT_REQUIRED`要求支持独立取消能力，不替代订货确认能力。
 详见[取消契约](purchase-item-cancellation.md)。

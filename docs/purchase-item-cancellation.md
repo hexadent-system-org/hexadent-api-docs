@@ -1,6 +1,6 @@
 # Purchase List item Cancel 与 Complete
 
-本契约定义 Approved 商品移除与 Ordered 剩余收货取消，并替换未收齐仍可完成的旧规则。与 Approved 整单 cancellation 分开；原整单接口和 metadata 恢复规则保持不变，所有回 Draft 路径都进行 [提交人冲突检查](purchase-actor-names.md)，只有单项 Cancel 支持用户确认覆盖。服务路径以 OpenAPI servers 为准（API 当前前缀 `/v1`）。
+本契约定义 Approved 商品取消记录保留与 Ordered 剩余收货取消，并替换未收齐仍可完成的旧规则。与 Approved 整单 cancellation 分开；原整单接口和 metadata 恢复规则保持不变，所有回 Draft 路径都进行 [提交人冲突检查](purchase-actor-names.md)，只有单项 Cancel 支持用户确认覆盖。服务路径以 OpenAPI servers 为准（API 当前前缀 `/v1`）。
 
 ## Ordered 状态与数量
 
@@ -14,10 +14,10 @@
 
 ## 收货进度排除已取消项
 
-以下收货进度规则只适用于 Ordered/Completed，Approved 已移除商品不保留在集合中。用户确认的新展示口径：取消项不计入收货进度的总 items，但保留订单原本的总项数、商品明细及真实收货记录。`receiptStatus` 与 `receiptCounts` 原有含义不变，不能把 Cancelled 伪装成 received，也不能删掉取消行来缩小 `itemCount`。
+以下收货进度规则只适用于 Ordered/Completed，Approved 取消商品只保留在数据库，不进入当前读取投影，也不显示收货进度。用户确认的新展示口径：取消项不计入收货进度的总 items，但保留订单原本的总项数、商品明细及真实收货记录。`receiptStatus` 与 `receiptCounts` 原有含义不变，不能把 Cancelled 伪装成 received，也不能删掉取消行来缩小 `itemCount`。
 
-- `itemCount`：订单全部商品行数，包括已取消行，商品列表总数继续使用。
-- `cancelledItemCount`：`cancelled_at` 非空的 item 行数，范围 0 至 itemCount；按 item 标记计算，与整单 Cancelled 状态、取消的 quantity 数量分开。无单项取消的历史行自然计为 0。
+- `itemCount`：订单可见商品行数，包括下单后取消行，不包括下单前取消行，商品列表总数继续使用。
+- `cancelledItemCount`：当前可见集合中 `cancelled_at` 非空的 item 行数，范围 0 至 itemCount；按 item 标记计算，与整单 Cancelled 状态、取消的 quantity 数量分开。无单项取消的历史行自然计为 0。
 - 收货进度有效总项数 = `itemCount - cancelledItemCount`。
 - 收齐项数 = `receiptCounts.received + receiptCounts.overReceived`；部分收货仍不计作收齐。取消项不能已收齐/超收，因此原分子无需改写。
 - 有效总项数大于 0：进度为收齐项数 / 有效总项数，百分比按最近整数四舍五入，与原页一致；取消项数大于 0 时单独显示，没有取消时不显示取消提示。
@@ -45,11 +45,11 @@
 {"expectedListVersion":2,"expectedItemVersion":3,"reason":"Vendor cannot supply the remaining quantity.","returnToDraft":true}
 ```
 
-`reason` 必填且必须为字符串；去除首尾空白后按 Unicode 字符数校验 1–500 字符，Ordered 保存规范化值；Approved 只校验并纳入幂等 fingerprint，不保存为商品取消记录。缺失、null、空串、纯空白或超过上限返回现有 422 字段校验错误（field 为 reason），没有取消或 Draft 写入。原始输入首尾空白不计入长度。Ordered 取消后不可编辑原因；两分支原因均不复制至 Draft。
+`reason` 必填且必须为字符串；去除首尾空白后按 Unicode 字符数校验 1–500 字符，两种状态均保存规范化原因及取消人、时间；不新建审计表。缺失、null、空串、纯空白或超过上限返回现有 422 字段校验错误（field 为 reason），没有取消或 Draft 写入。原始输入首尾空白不计入长度。Ordered 取消后不可编辑原因；两分支原因均不复制至 Draft。
 
-`returnToDraft` 可省略，默认 false；拒绝 null、未知字段、非法 UUID、非正数或超出 int64 的版本。取消数量始终由服务端加锁计算，客户端不传数量。Approved 恢复全部已保存 orderedQuantity 并删行，List version/updatedAt 更新，purchaseListItem 返回 null。Ordered 新 key 对已取消项报 `PURCHASE_ITEM_CANCELLED`；已收齐/超收报 `PURCHASE_ITEM_NOT_CANCELLABLE`；非 Approved/Ordered 报 `PURCHASE_LIST_STATE_CONFLICT`。与 Receive/Correction 使用相同的版本和锁顺序，Ordered 只增加 item version，不增加 List lifecycle version；Complete 必须锁定并重新核对所有 item。
+`returnToDraft` 可省略，默认 false；拒绝 null、未知字段、非法 UUID、非正数或超出 int64 的版本。取消数量始终由服务端加锁计算，客户端不传数量。Approved 可选恢复全部已保存 orderedQuantity，并保留取消行，List version/updatedAt 及 item version 更新，purchaseListItem 返回完整 item。Ordered 新 key 对已取消项报 `PURCHASE_ITEM_CANCELLED`；已收齐/超收报 `PURCHASE_ITEM_NOT_CANCELLABLE`；非 Approved/Ordered 报 `PURCHASE_LIST_STATE_CONFLICT`。与 Receive/Correction 使用相同的版本和锁顺序，Ordered 只增加 item version，不增加 List lifecycle version；Complete 必须锁定并重新核对所有 item。
 
-返回完整 `purchaseList`、`purchaseListItem`（Ordered 完整 item，Approved 显式 null）和 `restoredDraftItem`（不回 Draft 时为 null，回 Draft 时含 disposition=created/merged 及完整 draftItem）。响应可直接刷新 List 的 Complete 条件，不需要再次提交。
+返回完整 `purchaseList`、`purchaseListItem`（两种状态均为完整 item；旧成功幂等快照可能为 null）和 `restoredDraftItem`（不回 Draft 时为 null，回 Draft 时含 disposition=created/merged 及完整 draftItem）。响应可直接刷新 List 的 Complete 条件，不需要再次提交。
 
 Ordered 示例数量投影（完整 response 还包含既有详情字段）：
 
@@ -72,8 +72,8 @@ Ordered 示例数量投影（完整 response 还包含既有详情字段）：
 - 冲突提示包含双方姓名、当前/退回/合并数量与 Draft ID/version，复用已加载 item/Draft，无额外姓名查询。用户可明确继续覆盖，或主动改为 returnToDraft=false 后用新 key 仅取消；不自动降级、不自动确认/改数量/姓名；已收货和库存不受影响。Approved 整单取消仍强制回 Draft，不能用单项的“不回 Draft”方式绕过。
 - 当前商品 Draft 唯一性不变。数量合计超过 999999.99 时整次操作失败，取消标记和 Draft 均不提交；其他异常同样全部回滚。
 - 同 operation/key/payload 成功重放返回原响应，包含后续 List 已完成的情形，不重复增加数量；改变 payload 复用 key 返回 IDEMPOTENCY_CONFLICT。Receive/Correction 的历史成功请求也可重放，但取消后新 key 不允许变更。
-- Ordered 单项取消本身使用 nullable `cancelled_at`、`cancelled_by_member_id` 及 `cancellation_reason`（Text），原因与取消及 Draft 写入同事务提交；历史行不回填。DB 约束非 null 原因只能用于已取消项，并限制为去除首尾空白的 1–500 字符；历史已取消行继续允许 null。迁移 upgrade 保留旧数据，应用回滚保留扩展列及原因，不静默丢弃已保存原因。后续 schema downgrade 如存在非 null 原因必须拒绝，先明确数据保留方案。同组织成员外键与成对非空约束；后续业务姓名字段见上述姓名契约。不存 cancelled_quantity，不新建来源关联；取消本身不改 Inventory，不创建 receipt event/Inventory Activity。
-- 成功操作日志在提交后写入，记录组织/操作者、List/item ID、数量、是否回 Draft、Draft disposition/id、requestId 和结果。Approved 不创建 item 取消行/原因或商品取消历史，操作日志仅作请求关联且不存自由文本原因/商品快照；幂等仅保存规范化请求的 fingerprint 与成功结果。失败日志不能表述为成功；不输出凭证、内部 SQL 或敏感 payload。
+- 两种状态的单项取消均使用 nullable `cancelled_at`、`cancelled_by_member_id` 及 `cancellation_reason`（Text），原因与取消及 Draft 写入同事务提交；历史行不回填。DB 约束非 null 原因只能用于已取消项，并限制为去除首尾空白的 1–500 字符；历史已取消行继续允许 null。迁移 upgrade 保留旧数据，应用回滚保留扩展列及原因，不静默丢弃已保存原因。后续 schema downgrade 如存在非 null 原因必须拒绝，先明确数据保留方案。同组织成员外键与成对非空约束；后续业务姓名字段见上述姓名契约。不存 cancelled_quantity，不新建来源关联；取消本身不改 Inventory，不创建 receipt event/Inventory Activity。
+- 成功操作日志在提交后写入，记录组织/操作者、List/item ID、数量、是否回 Draft、Draft disposition/id、requestId 和结果。Approved 和 Ordered 都在现有 item 行保留取消原因/人/时间；操作日志仅作请求关联且不存自由文本原因/商品快照；幂等仅保存规范化请求的 fingerprint 与成功结果。失败日志不能表述为成功；不输出凭证、内部 SQL 或敏感 payload。
 
 ## Ordered 取消原因与发布兼容
 
@@ -87,7 +87,7 @@ Ordered 示例数量投影（完整 response 还包含既有详情字段）：
 
 ## Complete 与客户端兼容
 
-Complete 请求使用 `expectedListVersion` 和可选 `expectedItemVersions`（完整 item UUID/version map）；不再使用旧文档中的 confirmVariance。它在当前 API 也已不存在，不能作为短收绕过入口。
+Complete 请求使用 `expectedListVersion` 和可选 `expectedItemVersions`（当前 GET 详情可见 items 的完整 UUID/version map，不包含下单前取消行）；不再使用旧文档中的 confirmVariance。它在当前 API 也已不存在，不能作为短收绕过入口。
 
 若有未取消且 received < orderedQuantity 的项，返回 409 PURCHASE_LIST_ITEMS_PENDING，details 为 pendingItemCount 与 purchaseListItemIds。新客户端禁用 Complete 并提示处理待收货项；旧客户端仍能正常读取原枚举，并按通用错误处理显示后端英文 message。新 Cancel UI 必须等新 API 部署确认后才启用。
 
@@ -107,21 +107,25 @@ Complete 只改 List 状态并写原有 audit，不更改库存。成功结果�
 
 [订货确认契约](purchase-order-confirmation.md)新增独立orderedQuantity，旧plannedQuantity保留原需求。实时收货状态、Complete、pending/cancelled quantity及所有回Draft数量以orderedQuantity为准；旧快照缺新字段时回退plannedQuantity。原整单取消的metadata/姓名冲突规则保持，单项Cancel的姓名确认覆盖按下方扩展。新confirmation能力header保护所有改变订货量或人工金额后的相关取消/收货操作，成功旧幂等重放仍返回原快照。
 
-Requested4、Ordered5、Received2，取消并回Draft仅增加3；Ordered 没有自动退款，Actual Total不减少；Approved 移除商品则从当前清单金额排除。历史Received与库存不被修改，取消后Receive/Correction仍拒绝。
+Requested4、Ordered5、Received2，取消并回Draft仅增加3；Ordered 没有自动退款，Actual Total不减少；Approved 取消商品则从有效采购金额排除，原金额快照保留。历史Received与库存不被修改，取消后Receive/Correction仍拒绝。
 
-## Approved 商品移除、空清单与显式冲突确认（2026-10-18）
+## Approved 商品取消记录保留、空清单与显式冲突确认（2026-10-18）
 
 ### Approved Cancel
 
 沿用上方单项 cancellation 路径、现有 active Member 权限、必填原因（trim后1–500）和可选回 Draft（默认 false）。Approved 必须无 receipt history；异常历史状态返回 `PURCHASE_LIST_RECEIPTS_PREVENT_CANCELLATION`，不删除历史或已取消行。锁 List 再 item，检查 `expectedListVersion`/`expectedItemVersion`，与 confirmation Save、Mark as Ordered、整单取消串行。
 
-成功直接移除商品，**不留下 Cancelled 行、取消原因或商品取消历史**。Requested/商品/价格快照对仍存在的行继续不可变；不把删行等同于修改快照。Approved List version 加1并更新 updatedAt，余下 item versions 不变。`purchaseListItem=null`；`purchaseList` 是移除后的完整详情，`restoredDraftItem` 沿用原形状。已有成功幂等快照不改写或清除。
+成功保留商品行并设置 `cancelled_at`、`cancelled_by_member_id`、`cancellation_reason`，item version 加1。**不物理删除，不新增状态字段、cancelled_from_status 或独立商品取消审计表**。Requested/Ordered/价格/金额快照保持不变；取消后禁止编辑（含 no-op）、再次取消、Receive 和 Correction。Approved List version 加1并更新 updatedAt，其他 item versions 不变。`purchaseListItem` 返回完整取消行；旧成功幂等 payload 可为 null，保持原样不改写。
+
 
 退回数量为全部已保存 `orderedQuantity`：Requested=4、Ordered=5，退5；不依据原 Requested 或未保存输入。新 Draft 的 submittedByName 复制 item，其他采购 metadata 沿用单项 Cancel 的 null 规则，不复制人工金额/原因；已有 Draft 数量相加且保留 vendor 等 metadata。新建或合并超999999.99整次失败，沿用单项数量上限；整单历史恢复例外不扩展到单项。重新建单走正常审批，不能保留原单的金额覆盖或绕过审批。
 
-清单 itemCount、receiptCounts、previewItems、items、金额、Dashboard、Draft incomingSummary 与导出均以当前剩余集合为准。Approved `cancelledItemCount=0`，已移除行不算取消数；库存、收货和付款不变。再取消整单时只恢复仍存在的行，之前已回 Draft 的量不能再次增加。
+后端统一从清单 `items`、`previewItems`、`itemCount`、`cancelledItemCount` 和 `receiptCounts` 排除下单前取消行，Dashboard 同步此口径；下单后取消行仍计入可见集合及取消数。单项取消响应的独立 `purchaseListItem` 仍返回完整取消记录，即使它不再出现在内嵌清单中。有效项为未取消行，仅有效项参与 Approved 下单、整单回 Draft、CSV/PDF 导出和在途汇总。已取消项不参与 In active list 和 Approved 库存删除阻拦。整单取消不重复退回已取消项。
 
-按钮统一为 **Cancel**，确认按钮/原因输入/可选回 Draft 与 Ordered 一致；Approved 说明为 “After cancellation, this item will be removed from this Approved List. You can return its ordered quantity to Draft for later purchasing.” 不使用 Ordered 的保留历史说明。有 dirty/saving/failed 数量或金额时，必须先明确保存或放弃本地输入，再用服务端最新版本 Cancel，不悄然丢弃或采用未保存量。
+未新增取消阶段字段：`cancelled_at` 非空且 `ordered_at` 为空或 `cancelled_at < ordered_at` 表示下单前取消。即使父清单后来 Ordered/Completed，仍从当前读取集合隐藏这些行，并排除实际采购支出和参考价格，以及库存删除阻拦；Ordered 阶段取消保留既有金额和库存阻拦规则，不推断退款。原始数量/金额快照不会改写为0。
+
+按钮统一为 **Cancel**，确认按钮/原因输入/可选回 Draft 与 Ordered 一致；Approved 说明明确从当前清单移除展示，但取消记录与原因保留。前端直接使用后端可见集合，不重复计算取消阶段；详情无分页，下单后取消行稳定排列在有效行之后，显示 Cancelled 和 Reason，不显示编辑/取消按钮。计数仅包含可见集合。存在 dirty/saving/failed 输入时，先保存或明确 Discard changes，再按已保存版本取消；Discard changes 只清理前端输入。提交人冲突弹框显示 Current Draft submitter 和 Submitter on this item。并发取消导致商品从当前详情消失后，另行显示未保存编辑的恢复提示和明确 Discard changes 入口；若此前 Save 结果未知，先以冻结的原请求/key Retry Save 确认结果，再允许丢弃，不能隐藏恢复入口或永久锁住其他操作。
+
 
 ### Draft 提交人冲突确认
 
@@ -142,45 +146,47 @@ Requested4、Ordered5、Received2，取消并回Draft仅增加3；Ordered 没有
 
 服务端仍检查 List/item版本，并在同商品Draft锁内比较确认ID/version；不能用一个布尔值跳过检查。目标换行、删除、version改变（即使姓名现在相同）均409 `PURCHASE_DRAFT_VERSION_CONFLICT`，无写入，刷新后重新显示当前合并/覆盖影响并由用户确认。目标已删除时 details.draftItemId 为确认的ID、currentVersion=null；不能自动新建或覆盖另一行。未提供确认且Draft不存在时允许正常新建，并发唯一性竞争后必须重新读取并按相同规则检查。
 
-有效确认把合并后**整行** submittedByName 设置为退回 item 快照（包括 null），不只影响新增数量；其他 metadata 不改。无冲突/双方null且无确认时保留 Draft 姓名展示值，不额外弹窗。Draft新建version沿用现行规则，合并数量/覆盖姓名作为一次修改，version加1并更新updatedBy/updatedAt。超限、权限、状态、版本、任一写入/依赖失败，取消/删行/数量/姓名/幂等成功结果一并回滚。
+有效确认把合并后**整行** submittedByName 设置为退回 item 快照（包括 null），不只影响新增数量；其他 metadata 不改。无冲突/双方null且无确认时保留 Draft 姓名展示值，不额外弹窗。Draft新建version沿用现行规则，合并数量/覆盖姓名作为一次修改，version加1并更新updatedBy/updatedAt。超限、权限、状态、版本、任一写入/依赖失败，取消标记/数量/姓名/幂等成功结果一并回滚。
 
 关闭确认不提交；用户可以重新选择不回Draft，仅取消且不改姓名。Approved 整单取消不接受此确认字段，仍遇姓名冲突全回滚。新确认请求与原请求payload不同必须用新 key；未知结果重试冻结原请求/key。服务端可接受首次携带有效确认的请求，显式用户确认由UI保证；不能自动生成确认绕过弹窗。
 
 ### 空 Approved 与统一整单 Cancel（2026-10-20 修正）
 
-最后一个商品移除后，List 保持 Approved，不自动 Cancelled、不自动删除。`itemCount=0`、`cancelledItemCount=0`、四种 receiptCounts=0、`items=[]`、`previewItems=[]`、`canComplete=false`，当前清单金额为已知0；不因无价格行或0/0产生未知金额或100%进度。对 Approved 及其随后整单 Cancelled 的快照放宽集合为空，不允许创建空审批单或空 Ordered/Completed。仍列入 Approved 列表及 Dashboard 的清单计数，排序沿用各接口原规则。CSV 仅BOM/header，PDF保留清单页头和空表，总项数/合计0；不存在的行不导出。
+最后一个有效商品取消后，List 保持 Approved，不自动 Cancelled、不自动删除。数据库历史行仍在；详情 items/previewItems 为空、itemCount/cancelledItemCount/receiptCounts 均为0、`canComplete=false`，有效金额为已知0。不允许创建空审批单或将无有效项的 Approved 下单。历史版本产生的真正空 Approved 仍支持读取。仍列入 Approved 和 Dashboard 清单计数，直到用户手动整单取消。导出只含有效项；无有效项时 CSV 仅BOM/header，PDF保留页头和空表、项数/合计0。
 
-Mark as Ordered 对空清单返回409 `PURCHASE_LIST_EMPTY`，无写入。UI 禁用下单，沿用原整单 **Cancel** 按钮及确认弹框，不新增 Delete 按钮或整单 DELETE 接口。
+Mark as Ordered 对无有效项清单返回409 `PURCHASE_LIST_EMPTY`，无写入。UI 禁用下单，沿用整单 **Cancel** 按钮，不新增 Delete 或整单 DELETE 接口。
 
-空单与有商品清单统一调用 `POST /v1/purchase-lists/{purchaseListId}/cancellation`。沿用现有 active Member 权限、`Idempotency-Key`、`expectedListVersion` 和可选 `reason`；空单不额外要求取消能力 header。服务端锁 List、校验 Approved/版本/无 receipt history 后，将 List 转为 `cancelled`、version 加1，记录取消人/时间/原因及既有生命周期事件。空集合不读写 Draft/Inventory，返回现有 `PurchaseListCancellationResult`，其中 `purchaseList.status=cancelled`、`purchaseList.items=[]`、`itemCount=0`、金额为已知0、`restoredDraftItems=[]`。有商品时仍只恢复当前剩余商品，原整单提交人冲突规则不变。
+整单统一调用 `POST /v1/purchase-lists/{purchaseListId}/cancellation`，保留 active Member 权限、`Idempotency-Key`、`expectedListVersion`、可选原因和原提交人冲突规则。锁 List、校验 Approved/版本/无 receipt history 后，只将有效项恢复至 Draft，再将 List 转为 Cancelled、version 加1并记录既有生命周期事件。没有有效项时跳过 Draft 恢复，`restoredDraftItems=[]`；数据库保留全部历史行，不物理删除；返回详情按相同规则隐藏下单前取消行。
+
 
 清单与审批历史保留，父清单外键及物理删除保护保持。不再出现在 Approved/当前 MVP 列表或 Dashboard；已知 ID 的 GET 仍返回 Cancelled 审计详情，沿用既有 Cancelled 可见性，不新增历史列表页。同 operation/key/payload 重放原200，改变 payload 复用 key 返回 `IDEMPOTENCY_CONFLICT`；新 key 使用旧 version 返回版本冲突，使用当前 version 返回状态冲突，不再次写入。跨组织/未知 ID 仍404；失败不产生部分状态或历史记录。不新增恢复接口。
 
 ### 幂等、能力与回滚
 
-先认证/确认当前组织和active membership，再按组织/operation/key及原资源ID/fingerprint查历史成功结果，最后才查当前资源/状态/版本/能力。对无历史记录的不存在或跨租户ID统一404，不可凭ID跨组织取幂等结果。Approved删行、即使后续空清单已整单取消仍可重放原 Cancel 成功结果；不能依赖当前item获取List/组织后才寻找成功结果。重放只返回原快照，不复活资源，Web成功后刷新当前集合；404表示当前已移除，不自动重试重建。改变confirmation/版本/退回选择/规范化原因复用key返回IDEMPOTENCY_CONFLICT。
+先认证/确认当前组织和active membership，再按组织/operation/key及原资源ID/fingerprint查历史成功结果，最后才查当前资源/状态/版本/能力。对无历史记录的不存在或跨租户ID统一404，不可凭ID跨组织取幂等结果。Approved取消、即使后续清单已整单取消仍可重放原 Cancel 成功结果；不能依赖当前item获取List/组织后才寻找成功结果。重放只返回原快照，不复活资源，Web成功后刷新当前集合；404仍不得自动重建；旧历史删行结果按兼容协议处理。改变confirmation/版本/退回选择/规范化原因复用key返回IDEMPOTENCY_CONFLICT。
 
 新客户端发送 `X-Purchase-Cancellation-Version: 1`。Approved单项Cancel必须提供；Ordered新确认覆盖也必须提供，旧Ordered无确认仍允许缺省。提供不支持值或必需时缺失均409 `PURCHASE_CANCELLATION_CLIENT_REQUIRED`，details.requiredCancellationVersion=1，无副作用。与订货确认header独立：订货量/金额变化的操作仍需 `X-Purchase-Confirmation-Version: 1`。header不授予权限；CORS沿用既有机制允许两者。OpenAPI header是条件必需，允许字符串以业务409处理不支持值。成功历史重放优先于当前能力检查。
 
-API扩展先于Web；旧Ordered请求/非null item结果保持，旧客户端不提供确认不能覆盖姓名，Approved缺能力被拒绝以避免旧解析器收到null item。新API必须先验证现有List读消费者（Web及APP）能读取空items/previewItems并显示0、不崩溃；新Web能力/空态验证前不启用Approved移除。若旧消费者不兼容，记录独立兼容阻塞并另行授权，不能静默扩大APP范围。文档发布不代表API/DB已可用。
+交付顺序为 Docs、API 迁移与应用、Web；本轮用户授权仅本地并行开发，未授权 staging 迁移、推送或 PR。旧成功幂等响应可为 null，Web 应成功后刷新当前详情；旧空清单兼容继续保留。新 API 使用原取消能力 header，旧 Ordered 无确认请求保持兼容。
 
-数据库实现需检查原快照不可变/删除保护，允许严格Approved、零收货的行移除及空Approved转Cancelled；不允许物理删除清单，不移除审批历史到清单的外键；其他状态及收货记录保护不放宽。不要求保存Approved商品取消历史，不篡改历史成功payload。回滚保留Draft增量/姓名及幂等结果，不恢复已移除商品；不能回滚到把Draft合并重复执行、禁止安全重放或不能读空清单的旧binary。恢复采用明确诊断，不靠手动重放成功操作。
+迁移仅替换数据库保护函数，无新表/列，无历史回填；恢复 Approved 行物理删除保护，允许严格 Approved、零收货且无收货历史的取消标记。不放宽其他状态/快照保护或审批历史外键。存在保留的下单前取消记录时 schema downgrade 必须拒绝，不能丢弃历史；无该数据时可升降级。已部署的物理删除版 API 与新约束在 Approved Cancel 路径不兼容，因此迁移和新 API 必须协调发布；不能在迁移后回滚到物理删除 writer。原成功 payload、Draft 增量和姓名均保留，不重复重放恢复。
+
 
 ### 下游验收例
 
 | 输入/操作 | 预期 |
 | --- | --- |
-| Approved需求4订5，Draft原2，选择退回 | Draft=7，其余项保留；原行消失，无取消记录 |
+| Approved需求4订5，Draft原2，选择退回 | Draft=7，其余项保留；原行保留 Cancelled、原因及取消人/时间 |
 | Ordered需求4订5收2，Draft原2 | Draft=5，原取消行/原因/收货历史保留 |
 | Draft Alice2，返回Bob5，无确认 | 409且零写入；提示合并7、整行姓名将变Bob |
 | 同一快照确认继续 | Draft=7且姓名Bob；刷新持久化 |
 | 退出确认 / 不回Draft | 零写入 / 仅取消，不改Draft |
 | 确认后Draft改名、改量、被删重建 | 409重新确认；不覆盖、不新建降级 |
 | null返回姓名覆盖Alice，明确确认 | 数量相加，整行提交人清空为null |
-| 最后一项移除后下单 | 保留Approved空单；409 PURCHASE_LIST_EMPTY |
-| 手动Cancel空Approved，同key重试 | 原200；Draft不变；清单及历史保留，GET仍可读，Approved列表不再出现 |
-| 单项移除后再整单取消 | 只恢复剩余商品，无重复数量 |
-| Approved删行/整单取消后重放成功Cancel | 原成功结果，无重复Draft、无行复活 |
+| 最后一个有效项取消后下单 | 保留Approved及取消历史；409 PURCHASE_LIST_EMPTY |
+| 手动Cancel无有效项Approved，同key重试 | 原200；Draft不变；清单及历史保留，GET仍可读，Approved列表不再出现 |
+| 单项取消后再整单取消 | 只恢复剩余商品，无重复数量 |
+| Approved取消/整单取消后重放成功Cancel | 原成功结果，无重复Draft、无行复活 |
 | 合并超限或写入失败 | List/item/Draft全部回滚 |
 
 以上为契约验收计划，HTTP/PostgreSQL/浏览器与部署证据由下游提供；Docs只验证schema、样例、一致性和独立审查。

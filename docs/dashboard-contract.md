@@ -192,13 +192,16 @@ completion discussion above is historical; the current cancellation contract
 requires all items received or cancelled. See [confirmation](purchase-order-confirmation.md)
 and [cancellation](purchase-item-cancellation.md) for current semantics.
 
-## Empty Approved lists
+## Approved lists with no active items
 
-The [Approved item cancellation extension](purchase-item-cancellation.md) permits
-empty Approved lists: they remain in Approved counts and overview lists, with
-`itemCount=0`, all receipt counts zero, `cancelledItemCount=0`, no receiving progress
-and zero current list amount. Removing a row updates current counts, totals and
-active incoming; whole-list Cancel removes the empty list from Approved counts
-and Dashboard groups while retaining the Cancelled record and audit history. Keep
-existing Dashboard sorting/date filters. Ordered cancelled-item historical spend
-still retains confirmed order amounts and does not infer refunds.
+The [Approved item cancellation extension](purchase-item-cancellation.md) retains
+cancelled rows in the database. These lists remain in Approved counts and overview
+lists. Item, cancellation and receipt counts exclude rows cancelled before ordering,
+using the same timestamp rule as detail/cards. When all Approved rows are cancelled,
+all those counts and effective order amount are zero, and ordering is disabled.
+Truly empty legacy Approved lists use the same zero-count projection. Whole-list Cancel restores only active rows to Draft and
+removes the list from Approved counts and Dashboard groups while retaining the
+Cancelled parent, all item rows and audit history. Existing sorting/date filters
+remain unchanged. Items cancelled before ordered_at are excluded from historical
+spend even after the parent is later Ordered/Completed; post-order cancelled
+items still retain confirmed amounts and do not infer refunds.

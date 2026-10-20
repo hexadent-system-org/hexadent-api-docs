@@ -139,14 +139,14 @@ stock only, never Ordered Qty or item amount. Cancel with return-to-Draft restor
 Qty, following its existing metadata and submitted-by conflict rules. Ordered
 item cancellation retains its existing optional return choice, metadata rules,
 reason, no-receive/no-correction rule, idempotency and atomic Draft merge. Approved item Cancel restores all saved Ordered Qty (Requested 4 / Ordered 5
-returns 5), removes the row and requires the cancellation capability header.
+returns 5), retains the cancelled row/reason and requires the cancellation capability header.
 Single-item submitter conflicts may be explicitly confirmed against the current
 Draft ID/version; whole-list conflicts remain blocking. Overflow or an
 unconfirmed/stale merge conflict rolls the whole cancellation back.
 
 Neither partial receiving nor Ordered item cancellation reduces the confirmed
-item amount or infers a refund. Approved item Cancel removes that row and its
-amount from the current list, as defined in the [cancellation contract](purchase-item-cancellation.md). Quantity progress and active incoming exclude cancelled items as
+item amount or infers a refund. Approved item Cancel retains the snapshot but excludes its
+amount from effective procurement, including when the parent is later ordered, as defined in the [cancellation contract](purchase-item-cancellation.md). Quantity progress and active incoming exclude cancelled items as
 before; money and inventory movement are separate. There is no new refund field.
 
 ## Read surfaces, money and export
@@ -322,3 +322,10 @@ replays remain first. An empty Approved list cannot be ordered
 whole-list Cancel. That action retains the list and its approval history as
 Cancelled, skips Draft restoration and returns `restoredDraftItems=[]`. No separate
 Delete action or endpoint is provided.
+
+Approved cancellation records remain in the database but are excluded by the backend
+from current detail/card/Dashboard items and counts, including after ordering. Complete
+checks `expectedItemVersions` against the visible GET detail collection. If a refreshed
+list omits an item with unsaved edits, keep an explicit recovery notice with Discard
+changes; an unknown Save must first retry its original payload/key, even if the list
+has since changed status. Do not silently drop edits or leave actions permanently blocked.
