@@ -198,6 +198,7 @@ The [Approved item cancellation extension](purchase-item-cancellation.md) permit
 empty Approved lists: they remain in Approved counts and overview lists, with
 `itemCount=0`, all receipt counts zero, `cancelledItemCount=0`, no receiving progress
 and zero current list amount. Removing a row updates current counts, totals and
-active incoming; deleting the empty list removes it from counts and groups. Keep
+active incoming; whole-list Cancel removes the empty list from Approved counts
+and Dashboard groups while retaining the Cancelled record and audit history. Keep
 existing Dashboard sorting/date filters. Ordered cancelled-item historical spend
 still retains confirmed order amounts and does not infer refunds.

@@ -113,7 +113,7 @@ Requested4、Ordered5、Received2，取消并回Draft仅增加3；Ordered 没有
 
 ### Approved Cancel
 
-沿用上方单项 cancellation 路径、现有 active Member 权限、必填原因（trim后1–500）和可选回 Draft（默认 false）。Approved 必须无 receipt history；异常历史状态返回 `PURCHASE_LIST_RECEIPTS_PREVENT_CANCELLATION`，不删除历史或已取消行。锁 List 再 item，检查 `expectedListVersion`/`expectedItemVersion`，与 confirmation Save、Mark as Ordered、整单取消及空清单删除串行。
+沿用上方单项 cancellation 路径、现有 active Member 权限、必填原因（trim后1–500）和可选回 Draft（默认 false）。Approved 必须无 receipt history；异常历史状态返回 `PURCHASE_LIST_RECEIPTS_PREVENT_CANCELLATION`，不删除历史或已取消行。锁 List 再 item，检查 `expectedListVersion`/`expectedItemVersion`，与 confirmation Save、Mark as Ordered、整单取消串行。
 
 成功直接移除商品，**不留下 Cancelled 行、取消原因或商品取消历史**。Requested/商品/价格快照对仍存在的行继续不可变；不把删行等同于修改快照。Approved List version 加1并更新 updatedAt，余下 item versions 不变。`purchaseListItem=null`；`purchaseList` 是移除后的完整详情，`restoredDraftItem` 沿用原形状。已有成功幂等快照不改写或清除。
 
@@ -146,31 +146,25 @@ Requested4、Ordered5、Received2，取消并回Draft仅增加3；Ordered 没有
 
 关闭确认不提交；用户可以重新选择不回Draft，仅取消且不改姓名。Approved 整单取消不接受此确认字段，仍遇姓名冲突全回滚。新确认请求与原请求payload不同必须用新 key；未知结果重试冻结原请求/key。服务端可接受首次携带有效确认的请求，显式用户确认由UI保证；不能自动生成确认绕过弹窗。
 
-### 空 Approved 与手动删除
+### 空 Approved 与统一整单 Cancel（2026-10-20 修正）
 
-最后一个商品移除后，List 保持 Approved，不自动 Cancelled、不自动删除。`itemCount=0`、`cancelledItemCount=0`、四种 receiptCounts=0、`items=[]`、`previewItems=[]`、`canComplete=false`，当前清单金额为已知0；不因无价格行或0/0产生未知金额或100%进度。只对 Approved 放宽集合为空，不允许创建空审批单或空 Ordered/Completed。仍列入 Approved 列表及 Dashboard 的清单计数，排序沿用各接口原规则。CSV 仅BOM/header，PDF保留清单页头和空表，总项数/合计0；不存在的行不导出。
+最后一个商品移除后，List 保持 Approved，不自动 Cancelled、不自动删除。`itemCount=0`、`cancelledItemCount=0`、四种 receiptCounts=0、`items=[]`、`previewItems=[]`、`canComplete=false`，当前清单金额为已知0；不因无价格行或0/0产生未知金额或100%进度。对 Approved 及其随后整单 Cancelled 的快照放宽集合为空，不允许创建空审批单或空 Ordered/Completed。仍列入 Approved 列表及 Dashboard 的清单计数，排序沿用各接口原规则。CSV 仅BOM/header，PDF保留清单页头和空表，总项数/合计0；不存在的行不导出。
 
-Mark as Ordered 与整单 cancellation 对空清单返回409 `PURCHASE_LIST_EMPTY`，无写入；UI 禁用下单并显示空态/删除操作。手动删除是独立入口：
+Mark as Ordered 对空清单返回409 `PURCHASE_LIST_EMPTY`，无写入。UI 禁用下单，沿用原整单 **Cancel** 按钮及确认弹框，不新增 Delete 按钮或整单 DELETE 接口。
 
-`DELETE /v1/purchase-lists/{purchaseListId}?expectedListVersion=3`
+空单与有商品清单统一调用 `POST /v1/purchase-lists/{purchaseListId}/cancellation`。沿用现有 active Member 权限、`Idempotency-Key`、`expectedListVersion` 和可选 `reason`；空单不额外要求取消能力 header。服务端锁 List、校验 Approved/版本/无 receipt history 后，将 List 转为 `cancelled`、version 加1，记录取消人/时间/原因及既有生命周期事件。空集合不读写 Draft/Inventory，返回现有 `PurchaseListCancellationResult`，其中 `purchaseList.status=cancelled`、`purchaseList.items=[]`、`itemCount=0`、金额为已知0、`restoredDraftItems=[]`。有商品时仍只恢复当前剩余商品，原整单提交人冲突规则不变。
 
-要求认证、`Idempotency-Key`、`X-Purchase-Cancellation-Version: 1`，所有现有active Member可执行。服务端锁List后校验版本、Approved、items为空且无receipt history；非空409 `PURCHASE_LIST_NOT_EMPTY`，非Approved409状态冲突，历史收货409 `PURCHASE_LIST_RECEIPTS_PREVENT_CANCELLATION`，过期版本409 List版本冲突。成功200：
-
-```json
-{"purchaseListId":"55555555-5555-4555-8555-555555555555","deleted":true}
-```
-
-不写 Draft/Inventory，不创建 Cancelled snapshot；删除后GET/列表/Dashboard不再返回清单。旧成功幂等快照不是当前读模型，不清理其中清单引用；同operation/key/payload重放返回原200，新key对删除/未知/跨组织ID均404。不新增恢复接口。
+清单与审批历史保留，父清单外键及物理删除保护保持。不再出现在 Approved/当前 MVP 列表或 Dashboard；已知 ID 的 GET 仍返回 Cancelled 审计详情，沿用既有 Cancelled 可见性，不新增历史列表页。同 operation/key/payload 重放原200，改变 payload 复用 key 返回 `IDEMPOTENCY_CONFLICT`；新 key 使用旧 version 返回版本冲突，使用当前 version 返回状态冲突，不再次写入。跨组织/未知 ID 仍404；失败不产生部分状态或历史记录。不新增恢复接口。
 
 ### 幂等、能力与回滚
 
-先认证/确认当前组织和active membership，再按组织/operation/key及原资源ID/fingerprint查历史成功结果，最后才查当前资源/状态/版本/能力。对无历史记录的不存在或跨租户ID统一404，不可凭ID跨组织取幂等结果。Approved删行、甚至后续空清单被删除后仍可重放原 Cancel 成功结果；不能依赖当前item获取List/组织后才寻找成功结果。重放只返回原快照，不复活资源，Web成功后刷新当前集合；404表示当前已移除，不自动重试重建。改变confirmation/版本/退回选择/规范化原因复用key返回IDEMPOTENCY_CONFLICT。
+先认证/确认当前组织和active membership，再按组织/operation/key及原资源ID/fingerprint查历史成功结果，最后才查当前资源/状态/版本/能力。对无历史记录的不存在或跨租户ID统一404，不可凭ID跨组织取幂等结果。Approved删行、即使后续空清单已整单取消仍可重放原 Cancel 成功结果；不能依赖当前item获取List/组织后才寻找成功结果。重放只返回原快照，不复活资源，Web成功后刷新当前集合；404表示当前已移除，不自动重试重建。改变confirmation/版本/退回选择/规范化原因复用key返回IDEMPOTENCY_CONFLICT。
 
-新客户端发送 `X-Purchase-Cancellation-Version: 1`。Approved单项Cancel与空清单DELETE必须提供；Ordered新确认覆盖也必须提供，旧Ordered无确认仍允许缺省。提供不支持值或必需时缺失均409 `PURCHASE_CANCELLATION_CLIENT_REQUIRED`，details.requiredCancellationVersion=1，无副作用。与订货确认header独立：订货量/金额变化的操作仍需 `X-Purchase-Confirmation-Version: 1`。header不授予权限；CORS沿用既有机制允许两者。OpenAPI header是条件必需，允许字符串以业务409处理不支持值。成功历史重放优先于当前能力检查。
+新客户端发送 `X-Purchase-Cancellation-Version: 1`。Approved单项Cancel必须提供；Ordered新确认覆盖也必须提供，旧Ordered无确认仍允许缺省。提供不支持值或必需时缺失均409 `PURCHASE_CANCELLATION_CLIENT_REQUIRED`，details.requiredCancellationVersion=1，无副作用。与订货确认header独立：订货量/金额变化的操作仍需 `X-Purchase-Confirmation-Version: 1`。header不授予权限；CORS沿用既有机制允许两者。OpenAPI header是条件必需，允许字符串以业务409处理不支持值。成功历史重放优先于当前能力检查。
 
 API扩展先于Web；旧Ordered请求/非null item结果保持，旧客户端不提供确认不能覆盖姓名，Approved缺能力被拒绝以避免旧解析器收到null item。新API必须先验证现有List读消费者（Web及APP）能读取空items/previewItems并显示0、不崩溃；新Web能力/空态验证前不启用Approved移除。若旧消费者不兼容，记录独立兼容阻塞并另行授权，不能静默扩大APP范围。文档发布不代表API/DB已可用。
 
-数据库实现需检查原快照不可变/删除保护，允许严格Approved、零收货的行移除和空List删除；其他状态及收货记录保护不放宽。不要求保存Approved商品取消历史，不篡改历史成功payload。回滚保留Draft增量/姓名及幂等结果，不恢复已移除商品；不能回滚到把Draft合并重复执行、禁止安全重放或不能读空清单的旧binary。恢复采用明确诊断，不靠手动重放成功操作。
+数据库实现需检查原快照不可变/删除保护，允许严格Approved、零收货的行移除及空Approved转Cancelled；不允许物理删除清单，不移除审批历史到清单的外键；其他状态及收货记录保护不放宽。不要求保存Approved商品取消历史，不篡改历史成功payload。回滚保留Draft增量/姓名及幂等结果，不恢复已移除商品；不能回滚到把Draft合并重复执行、禁止安全重放或不能读空清单的旧binary。恢复采用明确诊断，不靠手动重放成功操作。
 
 ### 下游验收例
 
@@ -184,9 +178,9 @@ API扩展先于Web；旧Ordered请求/非null item结果保持，旧客户端不
 | 确认后Draft改名、改量、被删重建 | 409重新确认；不覆盖、不新建降级 |
 | null返回姓名覆盖Alice，明确确认 | 数量相加，整行提交人清空为null |
 | 最后一项移除后下单 | 保留Approved空单；409 PURCHASE_LIST_EMPTY |
-| 手动删除空Approved，同key重试 | 原200；列表不再出现；新key404 |
+| 手动Cancel空Approved，同key重试 | 原200；Draft不变；清单及历史保留，GET仍可读，Approved列表不再出现 |
 | 单项移除后再整单取消 | 只恢复剩余商品，无重复数量 |
-| Approved删行/删单后重放成功Cancel | 原成功结果，无重复Draft、无行复活 |
+| Approved删行/整单取消后重放成功Cancel | 原成功结果，无重复Draft、无行复活 |
 | 合并超限或写入失败 | List/item/Draft全部回滚 |
 
 以上为契约验收计划，HTTP/PostgreSQL/浏览器与部署证据由下游提供；Docs只验证schema、样例、一致性和独立审查。

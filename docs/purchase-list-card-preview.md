@@ -41,6 +41,7 @@ added to previews; full quantity/price/manual-amount data comes from detail.
 preview. Requested/product/price snapshots on remaining rows stay immutable.
 After the last removal, keep the Approved card with `itemCount=0`, `previewItems=[]`,
 zero current amount and no receipt percentage/bar. It still counts as an Approved
-list until the user deletes it. All consumers must handle empty arrays before
+list until the user invokes whole-list Cancel; the Cancelled record remains
+readable by ID but leaves the current list. All consumers must handle empty arrays before
 Approved removal is enabled; do not dereference the first preview unconditionally.
 Ordered/Completed cards retain cancelled rows and the existing receipt rules.

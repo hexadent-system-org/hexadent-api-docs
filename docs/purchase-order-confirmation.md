@@ -87,7 +87,7 @@ Example explicit Save:
 
 Return `200 PurchaseListDetail` with current list and item versions. Lock the
 parent list before its item, compare both versions, and require Approved state;
-order/cancel, empty-list deletion and competing saves serialize on that parent. A material change
+order/cancel and competing saves serialize on that parent. A material change
 increments list and item versions and updates list `updatedAt`; immutable product,
 price, submitted-by and approver snapshots do not change. No inventory, activity
 or receipt is created. A current-version no-op completes idempotency but does not
@@ -315,7 +315,10 @@ for this relaxation. Page acceptance remains user-owned after API/Web deployment
 
 The [cancellation extension](purchase-item-cancellation.md) independently requires
 `X-Purchase-Cancellation-Version: 1` for Approved item Cancel, single-item Draft
-submitter overwrite confirmation and empty Approved deletion. It does not replace
+submitter overwrite confirmation. It does not replace
 `X-Purchase-Confirmation-Version: 1` where this contract requires it. Old successful
-replays remain first. An empty Approved list cannot be ordered or whole-list
-cancelled (`PURCHASE_LIST_EMPTY`); it stays visible until manually deleted.
+replays remain first. An empty Approved list cannot be ordered
+(`PURCHASE_LIST_EMPTY`); it stays visible until the user invokes the existing
+whole-list Cancel. That action retains the list and its approval history as
+Cancelled, skips Draft restoration and returns `restoredDraftItems=[]`. No separate
+Delete action or endpoint is provided.

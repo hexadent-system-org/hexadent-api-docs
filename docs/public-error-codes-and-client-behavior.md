@@ -62,8 +62,7 @@ API 负责提供面向用户的英文错误提示。客户端不得解析 `messa
 | `RESOURCE_NOT_FOUND` | 404 | We couldn't find that resource. | 保持当前页面并刷新当前 Organization 的列表；跨租户 ID 使用同一 code/message，不提示资源存在。 |
 | `PURCHASE_CONFIRMATION_CLIENT_REQUIRED` | 409 | This purchase list uses updated order quantities or amounts. Use a supported client to continue. | 使用支持订货确认的新客户端；不自动伪造capability header或重复旧收货。details.requiredConfirmationVersion=1；详见purchase-order-confirmation.md。 |
 | `PURCHASE_CANCELLATION_CLIENT_REQUIRED` | 409 | Use a supported client to cancel Approved items or confirm a Draft merge. | details.requiredCancellationVersion=1；升级到支持取消扩展的客户端，不自动伪造header或重复提交。 |
-| `PURCHASE_LIST_EMPTY` | 409 | This purchase list is empty. Delete it when no longer needed. | 保留空Approved，禁用Mark as Ordered和整单取消，提供空清单删除；不自动改状态或创建商品。 |
-| `PURCHASE_LIST_NOT_EMPTY` | 409 | Only an empty Approved purchase list can be deleted. | 刷新详情，保留当前商品，禁止删除非空清单；不降级为整单取消。 |
+| `PURCHASE_LIST_EMPTY` | 409 | This Approved List is empty. | 保留空Approved，禁用Mark as Ordered；用户可手动复用整单Cancel转Cancelled，不物理删除清单，不自动改状态或创建商品。 |
 | `PURCHASE_LIST_STATE_CONFLICT` | 409 | This purchase list can no longer be changed in its current state. | 刷新 List detail 并按最新状态禁用不合法操作；不得自动回退状态。 |
 | `PURCHASE_LIST_RECEIPTS_PREVENT_CANCELLATION` | 409 | This purchase list has receiving history and can't be cancelled. | 保留 List detail 并隐藏/禁用 Cancel；不得尝试删除 receipt history。 |
 | `PURCHASE_CORRECTION_NEGATIVE_INVENTORY` | 409 | This correction would make inventory negative. | 保留输入，展示最新 Inventory quantity 和允许的最小 total；用户修改后使用新 key 重试。 |
@@ -185,11 +184,10 @@ or reason; failed saves must not silently enable Mark as Ordered with old values
 See [confirmation](purchase-order-confirmation.md) for conditional legacy-client
 409 protection and historical successful idempotency replay ordering.
 
-## Approved Cancel 与空清单删除
+## Approved Cancel 与空清单取消
 
-`PURCHASE_LIST_EMPTY` 阻止空Approved下单及整单取消；`PURCHASE_LIST_NOT_EMPTY`
-阻止删除非空清单。Approved单项Cancel返回purchaseListItem=null，当前item已移除；
-刷新列表/详情/Draft缓存，不能解引用null或保留虚构Cancelled行。重放成功的历史
-结果可能包含随后已删除的清单，不能用重放快照复活当前资源；当前读取404时返回列表。
+`PURCHASE_LIST_EMPTY` 阻止空Approved下单；空单可复用整单Cancel转Cancelled，保留清单及历史，不新增DELETE接口。Approved单项Cancel返回purchaseListItem=null，当前item已移除；
+刷新列表/详情/Draft缓存，不能解引用null或保留虚构Cancelled商品行。重放成功的历史
+结果可能包含随后已取消的清单，不能用重放快照复活Approved状态；应刷新当前详情。
 `PURCHASE_CANCELLATION_CLIENT_REQUIRED`要求支持独立取消能力，不替代订货确认能力。
 详见[取消契约](purchase-item-cancellation.md)。
