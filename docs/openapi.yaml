@@ -1228,7 +1228,7 @@ paths:
       tags: [Purchase Lists]
       operationId: addPurchaseDraftItems
       summary: 批量加入 shared Purchase Draft
-      description: 所有 active Member 可写。每次请求最多 100 items；每个 `plannedQuantity` 最大为 `999999.99`。每行可选传 `submittedByName`；省略、null 或空白保存为 null，非空姓名单行最多 100 字符。Web 批量输入同一姓名时复制到每个请求 item，不增加批次级字段。每行可选传用户设置的 `priority`（low、medium、high）；省略或显式 null 均保存为 null，表示未标记，不自动分配档位。枚举外的非空值返回 `REQUEST_VALIDATION_ERROR` 422。请求全有或全无，任何 422 都不写入。每个 Inventory Item 在 Draft 最多一行。已存在项不会累加，也不会被请求中的 submittedByName、priority 或其他字段覆盖；成功响应返回其当前 item 与 version。需要修改已有行时使用带 `expectedVersion` 的 PATCH。同一请求重复 `inventoryItemId`（即使其他字段不同）返回 `REQUEST_VALIDATION_ERROR` 422，整批不写入。
+      description: 所有 active Member 可写。每次请求最多 100 items；每个 `plannedQuantity` 最大为 `999999.99`。每行必须传非空 `submittedByName`；省略、null、空字符串或纯空白返回 REQUEST_VALIDATION_ERROR 422，整批不写入。姓名为单行，原始输入最多 100 字符，折叠连续空白并 trim。Web 批量输入同一姓名时复制到每个请求 item，不增加批次级字段。每行可选传用户设置的 `priority`（low、medium、high）；省略或显式 null 均保存为 null，表示未标记，不自动分配档位。枚举外的非空值返回 `REQUEST_VALIDATION_ERROR` 422。请求全有或全无，任何 422 都不写入。每个 Inventory Item 在 Draft 最多一行。已存在项不会累加，也不会被请求中的 submittedByName、priority 或其他字段覆盖；成功响应返回其当前 item 与 version。需要修改已有行时使用带 `expectedVersion` 的 PATCH。同一请求重复 `inventoryItemId`（即使其他字段不同）返回 `REQUEST_VALIDATION_ERROR` 422，整批不写入。
       parameters: [*id006]
       requestBody:
         required: true
@@ -1247,6 +1247,7 @@ paths:
                 notes: Order before Friday
               - inventoryItemId: 22222222-2222-4222-8222-222222222222
                 plannedQuantity: '2.00'
+                submittedByName: Alice
                 vendor: null
                 vendorItemNumber: null
                 unitPrice: null
@@ -1267,7 +1268,7 @@ paths:
       tags: [Purchase Lists]
       operationId: updatePurchaseDraftItem
       summary: 更新 shared Draft item
-      description: '`plannedQuantity` 是保存后的最终 total，不是 delta，最大为 `999999.99`；`submittedByName` 可单独修改，省略保持不变，null 或空白清空，非空值按姓名规则规范化；实际姓名变化更新 version/updatedAt 及真实 updatedBy，审批同时校验 Draft version；可单独将用户设置的 `priority` 改为 low、medium、high，或显式传 null 清空标记。省略 priority 时保持原值；其他未提供的可选字段同样保持不变，显式 null 仅清空可空字段。首次执行新的幂等请求时先校验 `expectedVersion`；stale version 即使提交值与当前值相同也返回 `PURCHASE_DRAFT_VERSION_CONFLICT`。只有当前 version 且提交值与当前持久化值相同时返回当前 item，`version` 和 `updatedAt` 不变；该 200 no-op 会完成幂等记录。已完成的相同 key 与 material payload 重试回放原结果。'
+      description: '`plannedQuantity` 是保存后的最终 total，不是 delta，最大为 `999999.99`；`submittedByName` 可单独修改，省略保持不变，显式 null、空字符串或纯空白返回 REQUEST_VALIDATION_ERROR 422，不得清空，非空值按姓名规则规范化；实际姓名变化更新 version/updatedAt 及真实 updatedBy，审批同时校验 Draft version；可单独将用户设置的 `priority` 改为 low、medium、high，或显式传 null 清空标记。省略 priority 时保持原值；其他未提供的可选字段同样保持不变，显式 null 仅清空可空字段。首次执行新的幂等请求时先校验 `expectedVersion`；stale version 即使提交值与当前值相同也返回 `PURCHASE_DRAFT_VERSION_CONFLICT`。只有当前 version 且提交值与当前持久化值相同时返回当前 item，`version` 和 `updatedAt` 不变；该 200 no-op 会完成幂等记录。已完成的相同 key 与 material payload 重试回放原结果。'
       parameters:
       - &id007
         name: draftItemId
@@ -1331,7 +1332,7 @@ paths:
       tags: [Purchase Lists]
       operationId: approvePurchaseDraftItems
       summary: 审批所选 Draft items 并创建 Purchase List
-      description: 仅 actual actor 为 Admin/Manager 时允许。必须且只能提供 selectedApproverMembershipId 或 selectedApproverName：成员方式仍要求同 Organization 的 active Admin/Manager，手填方式要求非空单行姓名且不创建成员、不授予权限；不能双方缺失、传 null 或同时提供。服务端保存业务审批人姓名与每行 submittedByName 的不可变快照，approvedBy 和 audit 仍为真实登录账号。成员后续改名不影响业务姓名快照。服务端在单一幂等事务校验全部 item version、创建 Approved snapshot 并移除所选 Draft items；任一失败均不产生部分写入。同一请求重复 `draftItemId`（即使 expectedVersion 不同）返回 `REQUEST_VALIDATION_ERROR` 422，不创建 List 或移除 Draft item。
+      description: 仅 actual actor 为 Admin/Manager 时允许。必须且只能提供 selectedApproverMembershipId 或 selectedApproverName：成员方式仍要求同 Organization 的 active Admin/Manager，手填方式要求非空单行姓名且不创建成员、不授予权限；不能双方缺失、传 null 或同时提供。不要求各商品已有非空提交人；旧 Draft 的 submittedByName 为 null 也可审批。服务端保存业务审批人姓名与每行 submittedByName 的不可变快照，approvedBy 和 audit 仍为真实登录账号。成员后续改名不影响业务姓名快照。服务端在单一幂等事务校验全部 item version、创建 Approved snapshot 并移除所选 Draft items；任一失败均不产生部分写入。同一请求重复 `draftItemId`（即使 expectedVersion 不同）返回 `REQUEST_VALIDATION_ERROR` 422，不创建 List 或移除 Draft item。
       parameters: [*id006]
       requestBody:
         required: true
@@ -4104,7 +4105,13 @@ components:
       type: [string, 'null']
       maxLength: 100
       pattern: '^[^\r\n]*$(?![\s\S])'
-      description: 可选的业务提交人；拒绝 CR/LF，折叠连续空白并 trim，规范化后最多 100 字符，空白转 null。响应始终返回此字段，普通 UI 空值留空。仅英文 A-Z 转小写用于冲突比较，不改变展示大小写；不做姓名身份验证或 NFKC/别名推断。
+      description: 业务提交人读值；历史记录/快照和历史退回来源可为 null，响应始终返回此字段，普通 UI 空值留空。新增和显式编辑请求使用非空 PurchaseSubmittedByNameInput，不回填或伪造历史姓名。仅英文 A-Z 转小写用于冲突比较，不改变展示大小写；不做姓名身份验证或 NFKC/别名推断。
+    PurchaseSubmittedByNameInput:
+      type: string
+      minLength: 1
+      maxLength: 100
+      pattern: '^(?=.*\S)[^\r\n]+$(?![\s\S])'
+      description: 必填的直接新增提交人，或PATCH实际提供的提交人；不能为null/空字符串/纯空白，拒绝CR/LF，原始输入最多100字符，trim并折叠连续空白，保留大小写，不做NFKC或身份推断。PATCH可省略以保持现值。
     PurchaseSelectedApprover:
       description: 必填的登记业务审批人，不代表经认证的审批动作。成员方式保留当前 actor 形状，但 displayName 是审批时快照；手填方式 membershipId/role 显式为 null，不创建成员。通用 PurchaseActor 不变。
       oneOf:
@@ -4192,11 +4199,11 @@ components:
     PurchaseDraftItemInput:
       type: object
       additionalProperties: false
-      required: [inventoryItemId, plannedQuantity]
+      required: [inventoryItemId, plannedQuantity, submittedByName]
       properties:
         inventoryItemId: *id001
         plannedQuantity: {$ref: '#/components/schemas/PurchaseQuantityInput'}
-        submittedByName: {$ref: '#/components/schemas/PurchaseSubmittedByName'}
+        submittedByName: {$ref: '#/components/schemas/PurchaseSubmittedByNameInput'}
         priority:
           type: [string, 'null']
           enum: [low, medium, high, null]
@@ -4235,7 +4242,7 @@ components:
       properties:
         expectedVersion: {type: integer, minimum: 1}
         plannedQuantity: {$ref: '#/components/schemas/PurchaseQuantityInput'}
-        submittedByName: {$ref: '#/components/schemas/PurchaseSubmittedByName'}
+        submittedByName: {$ref: '#/components/schemas/PurchaseSubmittedByNameInput'}
         priority:
           type: [string, 'null']
           enum: [low, medium, high, null]
